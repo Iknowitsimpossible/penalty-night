@@ -29,6 +29,20 @@
     <span class="dm-label" id="diveLabel">Wait</span>
     <div class="dm-track"><i class="dm-fill"></i><b class="dm-commit"></b></div>
   </div>
+  <section id="feedback" hidden aria-live="polite">
+    <svg id="fbGoal" aria-hidden="true"></svg>
+    <div class="fb-body">
+      <p class="fb-title" id="fbTitle"></p>
+      <p class="fb-detail" id="fbDetail"></p>
+      <p class="fb-advice" id="fbAdvice"></p>
+      <ul class="fb-legend" id="fbLegend"></ul>
+    </div>
+    <div class="fb-actions">
+      <button type="button" id="fbReplay">Replay <kbd>V</kbd></button>
+      <span class="fb-next">Tap to continue</span>
+    </div>
+    <i class="fb-timer" id="fbTimer"></i>
+  </section>
   <aside id="scout" hidden aria-live="polite"><small>Scouting</small><b id="scoutLabel"></b><span id="scoutText"></span></aside>
   <button id="mute" type="button">Sound on</button>
 

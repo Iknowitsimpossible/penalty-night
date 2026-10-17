@@ -234,8 +234,8 @@ button:focus-visible { outline: 2px solid var(--flood); outline-offset: 2px; }
 
 /* Scouting card: one line about the opponent's habits. */
 #scout {
-  position: absolute; left: 50%; top: 112px; transform: translateX(-50%);
-  width: min(380px, calc(100% - 32px)); display: grid; gap: 2px; padding: 10px 14px;
+  position: absolute; left: 0; right: 0; margin-inline: auto; top: 112px;
+  width: min(380px, calc(100% - 32px)); box-sizing: border-box; display: grid; gap: 2px; padding: 10px 14px;
   background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--cpu); border-radius: 4px;
   pointer-events: none; animation: lift 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -244,3 +244,46 @@ button:focus-visible { outline: 2px solid var(--flood); outline-offset: 2px; }
 #scout span { font-size: 14px; line-height: 1.35; }
 #stage.replaying #scout, #stage.replaying #diveMeter { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { #scout { animation: none; } }
+
+/* After-kick card: intended vs actual on a mini goal, plus one line of advice. */
+#feedback {
+  --left: 1;
+  position: absolute; left: 0; right: 0; margin-inline: auto; bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  width: min(460px, calc(100% - 32px)); box-sizing: border-box; display: grid; grid-template-columns: 132px 1fr; gap: 6px 14px; align-items: center;
+  padding: 12px 14px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: lift 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+#fbGoal { width: 132px; height: auto; display: block; }
+.fb-ground { stroke: rgba(238, 241, 248, 0.25); stroke-width: 0.8; }
+.fb-net { stroke: rgba(238, 241, 248, 0.1); stroke-width: 0.6; }
+.fb-frame { fill: none; stroke: var(--ink); stroke-width: 1.6; stroke-linejoin: round; }
+.fb-aim { fill: none; stroke: var(--flood); stroke-width: 1.3; stroke-dasharray: 2 1.6; }
+.fb-ball { fill: #fff; filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.8)); }
+.fb-keeper path { stroke: var(--cpu); stroke-width: 1.8; stroke-linecap: round; }
+.fb-dive path { stroke: var(--you); stroke-width: 1.8; stroke-linecap: round; }
+.fb-body { display: grid; gap: 3px; min-width: 0; }
+.fb-title { margin: 0; font: 700 12px var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--flood); }
+.fb-detail { margin: 0; font-size: 13px; color: var(--muted); }
+.fb-advice { margin: 0; font-size: 16px; line-height: 1.3; font-weight: 600; text-wrap: pretty; }
+.fb-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 0; padding: 0; list-style: none; font: 500 10px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.fb-legend li::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 5px; vertical-align: -1px; border-radius: 50%; }
+.fb-key-aim::before { border: 1.3px dashed var(--flood); box-sizing: border-box; }
+.fb-key-ball::before { background: #fff; }
+.fb-key-keeper::before { background: var(--cpu); border-radius: 1px !important; transform: rotate(45deg) scale(0.75); }
+.fb-key-dive::before { background: var(--you); border-radius: 1px !important; transform: rotate(45deg) scale(0.75); }
+.fb-actions { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#fbReplay {
+  font: 600 13px var(--body); letter-spacing: 0.04em; color: var(--ink); cursor: pointer; min-height: 36px;
+  background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px;
+}
+#fbReplay:hover { border-color: var(--flood); }
+kbd { font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 1px 4px; margin-left: 4px; }
+.fb-next { font: 500 11px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.fb-timer { position: absolute; left: 0; bottom: 0; height: 2px; width: calc(var(--left) * 100%); background: var(--flood); opacity: 0.7; }
+#stage.replaying #feedback { visibility: hidden; }
+@media (max-width: 420px) {
+  #feedback { grid-template-columns: 96px 1fr; gap: 4px 10px; padding: 10px 12px 12px; }
+  #fbGoal { width: 96px; }
+  .fb-advice { font-size: 15px; }
+}
+@media (prefers-reduced-motion: reduce) { #feedback { animation: none; } }

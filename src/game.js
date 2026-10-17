@@ -14,6 +14,9 @@ import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
 import { keeperPlan, readDive } from './ai/keeper.js';
 import { STYLE_KEYS, styleOf } from './ai/styles.js';
+import { explainKick, explainSave } from './feedback/explain.js';
+import { createFeedbackCard } from './ui/feedback-card.js';
+import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength } from './ui/settings.js';
 import { TEAMS, YOU, createCup, recordResult, standings, currentFixture, goalDifference, teamName } from './tournament/cup.js';
 
 export function startGame() {
@@ -21,6 +24,14 @@ const $ = (id) => document.getElementById(id);
 
 // Gameplay randomness is seedable (see core/random.js); visual randomness is not.
 const rng = createRng();
+// localStorage can throw (private windows, blocked storage); fall back to memory.
+const storage = (() => {
+  try { const s = window.localStorage; s.getItem('x'); return s; } catch (e) {
+    const m = new Map();
+    return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) };
+  }
+})();
+const settings = loadSettings(storage);
 
 const LEVELS = {
   amateur: { note: 'Slow keeper who guesses a lot. Their takers miss often.',
@@ -99,6 +110,7 @@ function collide(h) {
         ball.vel.z = Math.max(ball.vel.z, rng.range(1.5, 4));
         ball.vel.x += rng.range(-1.5, 1.5);
         ball.spin *= 0.2;
+        if (!shot.touchAt) shot.touchAt = { x: p.x, y: p.y };
         shot.touched = true; shot.cool = 0.1;
         sfx.save();
         break;
@@ -108,6 +120,7 @@ function collide(h) {
   // crossing the goal line
   if (shot && !shot.crossed && shot.prevZ >= 0 && p.z < 0) {
     shot.crossed = true;
+    shot.lineAt = { x: p.x, y: p.y };
     if (Math.abs(p.x) < HALF && p.y < GOAL_H) { shot.goal = true; shot.goalY = p.y; }
     else shot.outside = { x: p.x, y: p.y };
   }
@@ -126,7 +139,7 @@ function collide(h) {
   if (p.z < -4.6 + 0.06 + R && p.y < 0.9 + R && ball.vel.z < 0) { ball.vel.z = -ball.vel.z * 0.35; ball.vel.x *= 0.6; }
 }
 function hitFrame() {
-  if (shot && shot.cool <= 0) { shot.post = true; shot.cool = 0.08; sfx.post(); }
+  if (shot && shot.cool <= 0) { if (!shot.postAt) shot.postAt = { x: ball.pos.x, y: ball.pos.y }; shot.post = true; shot.cool = 0.08; sfx.post(); }
 }
 
 // ------------------------------------------------------------------ audio (audio/sfx.js)
@@ -285,7 +298,9 @@ function trySkip() {
   return !!post;
 }
 document.addEventListener('keydown', (e) => {
-  if ((e.key === ' ' || e.key === 'Enter' || e.key === 'Escape') && post) { e.preventDefault(); trySkip(); }
+  if (!post) return;
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); trySkip(); }
+  else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); requestReplay(); }
 });
 canvas.addEventListener('pointerdown', (e) => {
   initAudio();
@@ -408,6 +423,33 @@ function resolve(kind) {
     else { banner(missText + '!', 'They cracked under pressure.', 'good'); sfx.roar(false); cheer.you = 0.6; }
   }
   startCelebration(kind, mine, scored);
+  post.feedback = explainShot(kind, mine);
+}
+
+// Where the ball ended up for the diagram: stopped by the keeper, off the
+// frame, across the line, or wherever it rolled to a stop.
+function ballSpot() {
+  const p = shot.touchAt || shot.postAt || shot.lineAt || { x: ball.pos.x, y: ball.pos.y };
+  return { x: p.x, y: p.y };
+}
+function explainShot(kind, mine) {
+  if (mine) return explainKick({ kind, intent: shot.intent, ball: ballSpot(), keeper: shot.keeper, style: match.opp.style });
+  return explainSave({
+    kind, shot: ballSpot(), dive: match.dive, switched: !!(match.plan && match.plan.switched),
+    flight: shot.cpu ? shot.cpu.T : 0.65, style: match.opp.style,
+  });
+}
+
+const feedbackCard = createFeedbackCard({
+  root: $('feedback'), svg: $('fbGoal'), title: $('fbTitle'), detail: $('fbDetail'), advice: $('fbAdvice'),
+  legend: $('fbLegend'), replay: $('fbReplay'), timer: $('fbTimer'),
+}, { onReplay: requestReplay });
+const canReplay = () => !!(rec && rec.frames.length > 20);
+function requestReplay() {
+  if (!post || replay || !canReplay()) return;
+  post.replayed = true;
+  feedbackCard.hide();
+  startReplay();
 }
 
 // ------------------------------------------------------------------ celebrations
@@ -416,7 +458,7 @@ function resolve(kind) {
 let post = null, party = false;
 function startCelebration(kind, mine, scored) {
   post = { t: 0, kind, mine, scored, fx: [], run: null, cheerAt: -1,
-    replay: (mine && scored) || (!mine && kind === 'saved'), dur: 1.9 };
+    autoReplay: shouldAutoReplay(settings, { mine, kind }), replayed: false, dur: 1.9 };
   const at = (time, fn) => post.fx.push({ time, fn });
   if (mine && scored) {
     post.dur = 3.6;
@@ -436,6 +478,15 @@ function startCelebration(kind, mine, scored) {
   } else if (!mine) {
     at(0.2, () => { burstConfetti(-13, 6, -11, 10, 120, GOLD, 7); effects.setFlashRate(12); });
   }
+  // Short celebrations keep the first burst of colour but skip the run to the
+  // fans and the later fireworks. Either way the card stays up long enough to read.
+  if (celebrationLength(settings, match.mode) === 'short') {
+    post.run = null;
+    post.fx = post.fx.slice(0, 1);
+    post.dur = 2.6;
+  } else {
+    post.dur = Math.max(post.dur, 2.8);
+  }
 }
 function updatePost(dt) {
   if (replay) { updateReplay(dt); return; }
@@ -443,9 +494,13 @@ function updatePost(dt) {
   post.fx = post.fx.filter((f) => { if (post.t >= f.time) { f.fn(); return false; } return true; });
   if (post.cheerAt >= 0 && post.t >= post.cheerAt && !keeper.cheer) keeper.cheer = { t: 0, x: clamp(keeper.x, -2.6, 2.6) };
   if (post.run && post.t >= post.run.start) runCelebration(post.run, dt);
-  if (post.t > 0.5) $('skipTag').hidden = false;
+  if (post.feedback && post.t >= 0.55 && !feedbackCard.visible && !post.cardShown) {
+    post.cardShown = true;
+    feedbackCard.show(post.feedback, { canReplay: canReplay() });
+  }
+  if (post.cardShown) feedbackCard.progress((post.t - 0.55) / (post.dur - 0.55));
   if (post.t >= post.dur) {
-    if (post.replay && rec && rec.frames.length > 20) startReplay(); else finishPost();
+    if (post.autoReplay && !post.replayed && canReplay()) { post.replayed = true; feedbackCard.hide(); startReplay(); } else finishPost();
   }
 }
 // A player runs toward their fans: arms out like a plane (and a knee slide),
@@ -487,6 +542,7 @@ function runCelebration(r, dt) {
 }
 function finishPost() {
   endReplayLook();
+  feedbackCard.hide();
   post = null; replay = null; rec = null; shot = null;
   keeper.cheer = null;
   striker.root.visible = false;
