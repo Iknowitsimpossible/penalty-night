@@ -71,7 +71,48 @@ export function poseKeeper(k) {
   b.shoulders[1].rotation.z = -lerp(READY, REACHING, k.arms);
   b.hips[0].rotation.z = -0.12 * (1 - k.arms * 0.5);
   b.hips[1].rotation.z = 0.12 * (1 - k.arms * 0.5);
-  b.root.updateMatrixWorld(true);
+  keepOnGrass(k);
+}
+
+// The lowest world-space point of a body, worked out exactly from each
+// part's shape: box corners, sphere bottoms, and the lowest point on each
+// rim of a cylinder. (About 16 parts, so it is cheap enough for every step.)
+const _p = new THREE.Vector3(), _axis = new THREE.Vector3();
+export function lowestPoint(root) {
+  let low = Infinity;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const g = o.geometry.parameters, m = o.matrixWorld;
+    if (o.geometry.type === 'BoxGeometry') {
+      for (let i = 0; i < 8; i++) {
+        _p.set((i & 1 ? 0.5 : -0.5) * g.width, (i & 2 ? 0.5 : -0.5) * g.height, (i & 4 ? 0.5 : -0.5) * g.depth).applyMatrix4(m);
+        low = Math.min(low, _p.y);
+      }
+    } else if (o.geometry.type === 'SphereGeometry') {
+      low = Math.min(low, _p.setFromMatrixPosition(m).y - g.radius);
+    } else if (o.geometry.type === 'CylinderGeometry') {
+      // A rim of radius r around a tilted axis dips r * sqrt(1 - axis.y^2) below its centre.
+      _axis.setFromMatrixColumn(m, 1).normalize();
+      const dip = Math.sqrt(Math.max(0, 1 - _axis.y * _axis.y));
+      for (const [y, r] of [[g.height / 2, g.radiusTop], [-g.height / 2, g.radiusBottom]]) {
+        low = Math.min(low, _p.set(0, y, 0).applyMatrix4(m).y - r * dip);
+      }
+    }
+  });
+  return low;
+}
+// The dive tilts the body around the feet, which would push the lower leg
+// (and, landing, a glove) into the grass. Lift the keeper just enough that
+// nothing goes below the ground, the way a real keeper's feet leave it.
+function keepOnGrass(k) {
+  const root = k.body.root;
+  root.updateMatrixWorld(true);
+  const low = lowestPoint(root);
+  if (low < 0) {
+    k.y -= low;
+    root.position.y = k.y;
+    root.updateMatrixWorld(true);
+  }
 }
 export function hideKeeper(body) { body.root.visible = false; }
 
@@ -88,7 +129,10 @@ export function planDive(k, tx, ty, speed = 1) {
     toY = clamp(ty - REACH, 0, 0.55);
   } else {
     const h = clamp(ty / GOAL_H, 0, 1.15);
-    tilt = side * lerp(1.35, 0.6, Math.min(h, 1));
+    // Low dives are almost flat: keepOnGrass() lifts a tilted body by about
+    // half its width, so a steeper tilt would leave the gloves well above a
+    // ball along the ground.
+    tilt = side * lerp(1.45, 0.6, Math.min(h, 1));
     toY = clamp(ty - REACH * Math.cos(tilt), 0, 0.5);
     toX = tx - side * REACH * Math.sin(Math.abs(tilt));
   }
@@ -107,7 +151,7 @@ export function updateKeeper(k, dt, time) {
     poseKeeper(k);
     k.body.shoulders[0].rotation.z = 0.55 + Math.sin(c * 14) * 0.3;
     k.body.shoulders[1].rotation.z = -0.12;
-    k.body.root.updateMatrixWorld(true);
+    keepOnGrass(k);
     return;
   }
   const d = k.dive;
