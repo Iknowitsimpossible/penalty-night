@@ -1,15 +1,18 @@
 import * as THREE from 'three';
-import { readSwipe, keyboardKick } from './input/swipe.js';
-import { HALF, GOAL_H, POST_R, R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, KEEPER_Z, REACH, RUNUP, COMMIT, netDepth } from './core/constants.js';
+import { readSwipe } from './input/swipe.js';
+import { createPointerInput } from './input/pointer.js';
+import { createKeyboardAim } from './input/keyboard.js';
+import { R, SPOT_Z, KEEPER_Z, RUNUP, COMMIT } from './core/constants.js';
 import { clamp, lerp } from './core/math.js';
 import { createRng } from './core/random.js';
-import { rand, gauss } from './core/visual-random.js';
 import { createWorld } from './render/world.js';
 import { createEffects, GOLD } from './render/effects.js';
 import { makePerson, KITS, animateRunup, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './render/people.js';
 import { createBallState, launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
+import { newShot, collideStep, judge } from './physics/collisions.js';
 import { createBallMesh, createBallTracking } from './render/ball.js';
 import { createCameraDirector } from './render/camera.js';
+import { createReplays } from './render/replay.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
@@ -19,8 +22,10 @@ import { explainKick, explainSave } from './feedback/explain.js';
 import { LESSONS, checkLesson } from './practice/lessons.js';
 import { createFeedbackCard } from './ui/feedback-card.js';
 import { createSettingsPanel } from './ui/settings-panel.js';
+import { hubView } from './ui/cup-hub.js';
+import { createHud } from './ui/hud.js';
 import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength, reducedMotion } from './ui/settings.js';
-import { TEAMS, YOU, createCup, recordResult, standings, currentFixture, goalDifference, teamName } from './tournament/cup.js';
+import { TEAMS, createCup, recordResult, currentFixture } from './tournament/cup.js';
 
 export function startGame() {
 const $ = (id) => document.getElementById(id);
@@ -57,9 +62,11 @@ try {
   $('fail').hidden = false; $('menu').hidden = true; return;
 }
 const { renderer, scene, camera, glowTex, net, updateNet, crowdSpots, paintCrowd, updateCrowd, cheer, lighten, towers, updateTowers, dummy, tmpColor } = world;
+// The camera director (render/camera.js) picks and glides between shots.
+const cam = createCameraDirector(camera);
 // Net bulges are recorded so a replay can show them again.
-function bulgeNet(at, dir, strength, fromReplay) {
-  if (rec && !fromReplay) rec.events.push({ t: rec.t, at: at.clone(), dir: dir.clone(), s: strength });
+function bulgeNet(at, dir, strength) {
+  replays.noteNet(at, dir, strength);
   world.bulgeNet(at, dir, strength);
 }
 
@@ -101,61 +108,14 @@ function launch(target, T, spin) {
   ball.moving = true;
 }
 
-// ------------------------------------------------------------------ collisions
-const _cp = new THREE.Vector3(), _n = new THREE.Vector3();
-function bounceOff(cp, radius, restitution) {
-  _n.subVectors(ball.pos, cp);
-  const dist = _n.length();
-  if (dist >= R + radius || dist === 0) return false;
-  _n.divideScalar(dist);
-  const vn = ball.vel.dot(_n);
-  if (vn < 0) ball.vel.addScaledVector(_n, -(1 + restitution) * vn);
-  ball.pos.copy(cp).addScaledVector(_n, R + radius);
-  return true;
-}
-function collide(h) {
-  const p = ball.pos;
-  for (const s of [-1, 1]) {
-    if (bounceOff(_cp.set(s * PX, clamp(p.y, 0, BAR_Y), 0), POST_R, 0.6)) hitFrame();
-  }
-  if (bounceOff(_cp.set(clamp(p.x, -PX, PX), BAR_Y, 0), POST_R, 0.6)) hitFrame();
-
-  if (keeper.active && shot && shot.cool <= 0 && p.z < 1.6 && p.z > -0.4) {
-    for (const s of keeperSpheres(keeper)) {
-      if (bounceOff(s.c, s.r, 0.3)) {
-        ball.vel.z = Math.max(ball.vel.z, rng.range(1.5, 4));
-        ball.vel.x += rng.range(-1.5, 1.5);
-        ball.spin *= 0.2;
-        if (!shot.touchAt) shot.touchAt = { x: p.x, y: p.y };
-        shot.touched = true; shot.cool = 0.1;
-        sfx.save();
-        break;
-      }
-    }
-  }
-  // crossing the goal line
-  if (shot && !shot.crossed && shot.prevZ >= 0 && p.z < 0) {
-    shot.crossed = true;
-    shot.lineAt = { x: p.x, y: p.y };
-    if (Math.abs(p.x) < HALF && p.y < GOAL_H) { shot.goal = true; shot.goalY = p.y; }
-    else shot.outside = { x: p.x, y: p.y };
-  }
-  if (shot) shot.prevZ = p.z;
-  // the net catches a goal
-  if (shot && shot.goal && p.z < 0) {
-    const depth = netDepth(clamp(p.y, 0, GOAL_H));
-    if (p.z < -depth + R) {
-      if (!shot.netHit) { shot.netHit = true; bulgeNet(p, ball.vel, clamp(ball.vel.length() * 0.035, 0.12, 0.6)); sfx.net(); }
-      p.z = -depth + R; ball.vel.multiplyScalar(0.12); ball.vel.z = Math.abs(ball.vel.z) * 0.3;
-    }
-    if (Math.abs(p.x) > HALF - R) { p.x = Math.sign(p.x) * (HALF - R); ball.vel.x *= -0.2; }
-    if (p.y > GOAL_H - R) { p.y = GOAL_H - R; ball.vel.y = -Math.abs(ball.vel.y) * 0.2; }
-  }
-  // advertising boards behind the goal
-  if (p.z < -4.6 + 0.06 + R && p.y < 0.9 + R && ball.vel.z < 0) { ball.vel.z = -ball.vel.z * 0.35; ball.vel.x *= 0.6; }
-}
-function hitFrame() {
-  if (shot && shot.cool <= 0) { if (!shot.postAt) shot.postAt = { x: ball.pos.x, y: ball.pos.y }; shot.post = true; shot.cool = 0.08; sfx.post(); }
+// ------------------------------------------------------------------ collisions (physics/collisions.js)
+function collide() {
+  if (!shot) return;
+  collideStep(ball, shot, keeper.active ? keeperSpheres(keeper) : null, rng, {
+    post: () => sfx.post(),
+    save: () => sfx.save(),
+    net: (p, v, strength) => { bulgeNet(p, v, strength); sfx.net(); },
+  });
 }
 
 // ------------------------------------------------------------------ audio (audio/sfx.js)
@@ -183,36 +143,10 @@ function winner() {
   return shootoutWinner(match.you, match.cpu);
 }
 
-function renderHud() {
-  const fillDots = (el, arr) => {
-    const n = Math.max(5, arr.length + (arr.length >= 5 ? 1 : 0));
-    el.innerHTML = '';
-    for (let i = 0; i < n; i++) {
-      const li = document.createElement('li');
-      if (i < arr.length) li.className = arr[i] ? 'goal' : 'miss';
-      el.appendChild(li);
-    }
-  };
-  fillDots($('dotsYou'), match.you);
-  fillDots($('dotsCpu'), match.cpu);
-  $('scoreLine').textContent = `${goals(match.you)} – ${goals(match.cpu)}`;
-  const round = match.you.length === match.cpu.length ? match.you.length + 1 : match.you.length;
-  $('round').textContent = (match.stageLabel ? match.stageLabel + ' · ' : '') + (round <= 5 ? `Round ${round} of 5` : `Sudden death · kick ${round - 5}`);
-}
+const hud = createHud($);
+const renderHud = () => hud.score(match.you, match.cpu, match.stageLabel);
 
-let bannerTimer = 0;
-function banner(text, sub, tone, holdMs) {
-  const el = $('banner');
-  $('bannerText').textContent = text; $('bannerSub').textContent = sub || '';
-  el.className = tone; void el.offsetWidth; el.classList.add('show');
-  clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(() => { $('bannerText').textContent = ''; $('bannerSub').textContent = ''; }, holdMs || 1700);
-}
-const hint = (t) => { $('hint').textContent = t; };
-function clearBanner() {
-  clearTimeout(bannerTimer);
-  $('bannerText').textContent = ''; $('bannerSub').textContent = '';
-}
+const { banner, hint, clearBanner } = hud;
 
 // The opponent decides how good their keeper and takers are, their kit,
 // and the colour of their half of the crowd.
@@ -237,7 +171,7 @@ function startMatch(o) {
   level = o.params;
   dressOpponent(o);
   $('hub').hidden = true;
-  party = false; post = null; replay = null; rec = null; endReplayLook();
+  party = false; post = null; replays.clear(); endReplayLook();
   match.you = []; match.cpu = [];
   const practicing = o.mode === 'practice';
   $('menu').hidden = true; $('end').hidden = true; $('practiceDone').hidden = true;
@@ -261,8 +195,8 @@ function nextTurn() {
 
 function setupYourKick() {
   match.turn = 'you'; match.phase = 'aim'; shot = null;
-  kb.x = 0; kb.y = 1.2; kb.curl = 0; kb.power = 0; kb.charging = false;
-  $('diveMeter').hidden = true;
+  keys.reset(1.2);
+  hud.diveMeter(null);
   placeBall();
   hideKeeper(keepers.you); keepers.cpu.root.visible = true;
   keeper = newKeeper(keepers.cpu); keeper.active = true; keeper.maxShift = level.shift;
@@ -279,38 +213,18 @@ function setupYourKick() {
   if (!coached) $('coach').hidden = false;
 }
 
-// A short scouting card about the opponent's style.
-let scoutTimer = 0;
-function showScout(o, seconds) {
-  const st = styleOf(o.style);
-  $('scoutLabel').textContent = st.label;
-  $('scoutText').textContent = st.scout;
-  $('scout').hidden = false;
-  clearTimeout(scoutTimer);
-  scoutTimer = setTimeout(() => { $('scout').hidden = true; }, seconds * 1000);
-}
+const showScout = (o, seconds) => hud.scout(o.style, seconds);
 
-// The dive timing bar: fills during the run-up; red until the plant foot
-// (COMMIT), gold after it. Diving in the red lets the taker switch sides.
-$('diveMeter').style.setProperty('--commit', String(COMMIT / RUNUP));
+// The dive timing bar shows while you can still dive on their kick.
 function renderDiveMeter() {
-  const el = $('diveMeter');
   const active = match.turn === 'cpu' && (match.phase === 'runup' || (match.phase === 'flight' && shot && !shot.done));
-  el.hidden = !active;
-  if (!active) return;
-  const t = match.phase === 'runup' ? match.timer : RUNUP;
-  el.style.setProperty('--fill', String(clamp(t / RUNUP, 0, 1)));
-  const locked = t >= COMMIT, d = match.dive;
-  el.classList.toggle('locked', locked && !d);
-  el.classList.toggle('dived', !!d && !d.early);
-  el.classList.toggle('early', !!d && d.early);
-  $('diveLabel').textContent = d ? (d.early ? 'Early!' : 'Dived') : locked ? 'Dive!' : 'Wait';
+  hud.diveMeter(active ? { t: match.phase === 'runup' ? match.timer : RUNUP, dive: match.dive } : null);
 }
 
 function setupCpuKick() {
   match.turn = 'cpu'; match.phase = 'runup'; match.timer = 0; shot = null;
   match.plan = planShot(match.opp.style, rng); match.dive = null; match.committed = false;
-  kb.x = 0; kb.y = 1.0;
+  keys.reset(1.0);
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
   keeper = newKeeper(keepers.you); keeper.active = true; keeper.maxShift = 1.85;
@@ -329,41 +243,26 @@ function setupCpuKick() {
   renderDiveMeter();
 }
 
-// ---------------- your kick: read the swipe
-const trail = $('trail');
-const tctx = trail.getContext('2d');
-let swipe = null, trailFade = 0;
-function stagePoint(e) {
-  const r = stage.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top, t: performance.now() };
-}
+// ---------------- input (input/pointer.js, input/keyboard.js)
 let coached = false;
 try { coached = storage.getItem('penaltyNight.coached') === '1'; } catch (e) { /* storage unavailable */ }
+// During the after-kick card, a tap continues (after a short moment).
 function trySkip() {
-  if (post && (replay || post.t > 0.5)) { finishPost(); return true; }
+  if (post && (replays.playing || post.t > 0.5)) { finishPost(); return true; }
   return !!post;
 }
-canvas.addEventListener('pointerdown', (e) => {
-  initAudio();
-  kb.active = false;
-  if (trySkip()) return;
-  if (match.phase === 'aim') {
-    const p = stagePoint(e);
-    if (p.y < stage.clientHeight * 0.3) return;
-    swipe = [p]; trailFade = 1;
-    canvas.setPointerCapture(e.pointerId);
-  } else if ((match.phase === 'runup' || match.phase === 'flight') && match.turn === 'cpu' && !keeper.dive) {
-    playerDive(e);
-  }
+const canDive = () => match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight') && !keeper.dive && !post;
+const pointer = createPointerInput({ stage, canvas, trail: $('trail') }, {
+  onPress(p, e) {
+    initAudio();
+    kb.active = false;
+    if (trySkip()) return 'done';
+    if (match.phase === 'aim' && match.turn === 'you') return p.y < stage.clientHeight * 0.3 ? 'done' : 'swipe';
+    if (canDive()) playerDive(e);
+    return 'done';
+  },
+  onSwipe: (pts) => takeKick(pts),
 });
-canvas.addEventListener('pointermove', (e) => { if (swipe) swipe.push(stagePoint(e)); });
-canvas.addEventListener('pointerup', (e) => {
-  if (!swipe) return;
-  swipe.push(stagePoint(e));
-  const pts = swipe; swipe = null;
-  takeKick(pts);
-});
-canvas.addEventListener('pointercancel', () => { swipe = null; });
 
 const SWIPE_HINTS = {
   tap: 'Swipe up from the ball to shoot.',
@@ -403,7 +302,7 @@ function shoot(kick) {
 
 function startShot() {
   match.phase = 'flight';
-  shot = { t: 0, touched: false, post: false, goal: false, crossed: false, outside: null, prevZ: ball.pos.z, cool: 0, done: false, after: 0 };
+  shot = newShot(ball);
 }
 
 // ---------------- their kick: you dive
@@ -438,24 +337,15 @@ function cpuShoot() {
 
 // ---------------- deciding the result
 const LINES = {
-  goal: ['No chance for the keeper.', 'Ice in the veins.', 'Sent him the wrong way.', 'Calm as you like.'],
+  goal: ['No chance for the keeper.', 'Ice in the veins.', 'Sent the keeper the wrong way.', 'Calm as you like.'],
   top: ['Top bins.', 'Right under the bar.', 'Postage stamp.'],
   low: ['Low and hard.', 'Rolled it into the corner.', 'Through the grass.'],
-  saved: ['He got a hand to it.', 'Read it all the way.', 'Kept out at full stretch.'],
+  saved: ['A hand to it.', 'Read it all the way.', 'Kept out at full stretch.'],
 };
 const pick = (a) => a[(Math.random() * a.length) | 0];
-function judge() {
-  const s = shot, v = ball.vel, p = ball.pos;
-  if (s.goal) return 'goal';
-  if (s.outside) return s.post ? 'post' : s.outside.y >= GOAL_H ? 'over' : 'wide';
-  if (s.touched && ((v.z > 0.4 && p.z > 0.9) || v.length() < 0.8)) return 'saved';
-  if (s.post && v.z > 0.3 && p.z > 0.8) return 'post';
-  if (s.t > 3.2 || (v.length() < 0.25 && p.y <= R + 0.001)) return s.touched ? 'saved' : s.post ? 'post' : 'short';
-  return null;
-}
 function resolve(kind) {
   shot.done = true; shot.after = 0;
-  $('diveMeter').hidden = true;
+  hud.diveMeter(null);
   const mine = match.turn === 'you';
   const scored = kind === 'goal';
   if (match.mode === 'practice') return resolvePractice(kind, mine);
@@ -507,9 +397,9 @@ const feedbackCard = createFeedbackCard({
   root: $('feedback'), svg: $('fbGoal'), title: $('fbTitle'), detail: $('fbDetail'), advice: $('fbAdvice'),
   legend: $('fbLegend'), replay: $('fbReplay'), timer: $('fbTimer'),
 }, { onReplay: requestReplay });
-const canReplay = () => !!(rec && rec.frames.length > 20);
+const canReplay = () => replays.canPlay();
 function requestReplay() {
-  if (!post || replay || !canReplay()) return;
+  if (!post || replays.playing || !canReplay()) return;
   post.replayed = true;
   feedbackCard.hide();
   startReplay();
@@ -552,7 +442,7 @@ function startCelebration(kind, mine, scored) {
   }
 }
 function updatePost(dt) {
-  if (replay) { updateReplay(dt); return; }
+  if (replays.playing) { if (replays.update(dt, keeper)) finishPost(); return; }
   post.t += dt;
   post.fx = post.fx.filter((f) => { if (post.t >= f.time) { f.fn(); return false; } return true; });
   if (post.cheerAt >= 0 && post.t >= post.cheerAt && !keeper.cheer) keeper.cheer = { t: 0, x: clamp(keeper.x, -2.6, 2.6) };
@@ -606,73 +496,27 @@ function runCelebration(r, dt) {
 function finishPost() {
   endReplayLook();
   feedbackCard.hide();
-  post = null; replay = null; rec = null; shot = null;
+  post = null; replays.clear(); shot = null;
   keeper.cheer = null;
   striker.root.visible = false;
   nextTurn();
 }
 
-// ------------------------------------------------------------------ replays
-// While a kick is live, every frame stores where the ball, keeper and taker
-// are. A replay plays those frames back at half speed from a side camera.
-let rec = null, replay = null;
-function startRecording(mine) {
-  rec = { mine, frames: [], events: [], t: 0, body: keeper.body, taker: mine ? striker : taker };
-  if (mine) {
-    // You are never seen running up while aiming, so the replay adds that run-up in front.
-    for (let t = 0; t < RUNUP; t += 1 / 60) {
-      rec.frames.push({ t, b: [0, R, SPOT_Z], q: ball.mesh.quaternion.clone(), k: [keeper.x, keeper.y, keeper.tilt, keeper.arms], tk: t });
-    }
-    rec.t = RUNUP;
-  }
-}
-function recordFrame(sdt) {
-  rec.t += sdt;
-  const tk = !rec.mine && match.phase === 'runup' ? match.timer : RUNUP + 0.01;
-  rec.frames.push({ t: rec.t, b: [ball.pos.x, ball.pos.y, ball.pos.z], q: ball.mesh.quaternion.clone(), k: [keeper.x, keeper.y, keeper.tilt, keeper.arms], tk });
-  if (rec.frames.length > 900) rec.frames.shift();
-}
+// ------------------------------------------------------------------ replays (render/replay.js)
+const replays = createReplays({
+  ball, poseKeeper, animateRunup, cam, reduced: () => motionReduced,
+  bulgeNet: (at, dir, s) => world.bulgeNet(at, dir, s),
+});
+function startRecording(mine) { replays.start(mine, keeper, mine ? striker : taker); }
 function startReplay() {
-  const fr = rec.frames;
-  const lastF = fr[fr.length - 1];
-  replay = { t: fr[0].t, end: lastF.t, i: 0, ev: 0, side: Math.sign(lastF.b[0]) || 1 };
   ball.moving = false;
   net.bulges = [];
   keeper.cheer = null;
-  striker.root.visible = rec.mine; taker.root.visible = !rec.mine;
-  rec.taker.root.position.y = 0;
+  striker.root.visible = replays.mine; taker.root.visible = !replays.mine;
   stage.classList.add('replaying');
   $('replayTag').hidden = false; $('skipTag').hidden = false; $('skipTag').classList.remove('low');
   cam.goal = 'replay';
-  updateReplay(0);
-  cam.snap();
-}
-function updateReplay(dt) {
-  replay.t += dt * 0.5;
-  const fr = rec.frames;
-  while (replay.i < fr.length - 1 && fr[replay.i + 1].t <= replay.t) replay.i++;
-  const a = fr[replay.i], b = fr[Math.min(replay.i + 1, fr.length - 1)];
-  const u = b.t > a.t ? clamp((replay.t - a.t) / (b.t - a.t), 0, 1) : 0;
-  ball.pos.set(lerp(a.b[0], b.b[0], u), lerp(a.b[1], b.b[1], u), lerp(a.b[2], b.b[2], u));
-  ball.mesh.position.copy(ball.pos);
-  ball.mesh.quaternion.copy(a.q).slerp(b.q, u);
-  keeper.x = lerp(a.k[0], b.k[0], u); keeper.y = lerp(a.k[1], b.k[1], u);
-  keeper.tilt = lerp(a.k[2], b.k[2], u); keeper.arms = lerp(a.k[3], b.k[3], u);
-  poseKeeper(keeper);
-  animateRunup(rec.taker, lerp(a.tk, b.tk, u));
-  while (replay.ev < rec.events.length && rec.events[replay.ev].t <= replay.t) {
-    const e = rec.events[replay.ev++];
-    bulgeNet(e.at, e.dir, e.s, true);
-  }
-  // low side camera on the side the ball went, following the ball
-  if (motionReduced) {
-    // a fixed side view instead of following the ball
-    cam.wantPos.set(replay.side * 9, 1.6, 5.5); cam.wantLook.set(replay.side * 0.8, 1, 4);
-  } else {
-    cam.wantPos.set(replay.side * 8.2, 1.2, lerp(6.5, 3.2, clamp((SPOT_Z - ball.pos.z) / SPOT_Z, 0, 1)));
-    cam.wantLook.set(ball.pos.x * 0.8, Math.max(0.7, ball.pos.y), ball.pos.z);
-  }
-  if (replay.t >= replay.end + 0.4) finishPost();
+  replays.begin(keeper);
 }
 function endReplayLook() {
   stage.classList.remove('replaying');
@@ -682,7 +526,7 @@ function endReplayLook() {
 let endTimer = 0;
 function endMatch(w) {
   match.phase = 'end';
-  $('diveMeter').hidden = true; $('scout').hidden = true;
+  hud.diveMeter(null); hud.hideScout();
   const gy = goals(match.you), gc = goals(match.cpu);
   const sd = match.you.length > 5;
   $('endEyebrow').textContent = sd ? 'Decided in sudden death' : 'Full time';
@@ -755,7 +599,6 @@ function playCupMatch() {
   const t = TEAMS[fx.opp];
   startMatch({ mode: 'cup', name: t.name, code: t.code, color: t.color, params: paramsFor(t.rating), label: fx.label, style: t.style });
 }
-const nm = teamName;
 // Records your result and moves the cup on. Returns one line for the end screen.
 function cupAfterMatch(gy, gc) {
   const line = recordResult(tour, gy, gc, rng);
@@ -773,45 +616,16 @@ function showHub() {
   match.phase = 'menu'; cam.goal = 'menu';
   party = tour.stage === 'champion';
   if (party) flash(30);
-  const sw = (i) => `<span class="sw" style="background:#${new THREE.Color(TEAMS[i].color).getHexString()}"></span>`;
-  const stageName = { group: 'Group stage', semi: 'Semifinals', final: 'Final', champion: 'Champions', out: 'Knocked out' }[tour.stage];
-  $('hubEyebrow').textContent = `The Night Cup · ${stageName}`;
-  $('hubTitle').textContent = tour.stage === 'group' ? `Matchday ${tour.day + 1} of 3`
-    : tour.stage === 'semi' ? 'Semifinal' : tour.stage === 'final' ? 'The Final'
-    : tour.stage === 'champion' ? 'Champions!' : 'Knocked out';
-  $('hubNews').textContent = tour.news;
-  const fx = currentFixture(tour);
-  $('hubFixture').hidden = !fx;
-  if (fx) {
-    const r = TEAMS[fx.opp].rating, stars = Math.max(1, Math.round(r * 5));
-    $('hubFixture').innerHTML = `<div class="who"><small>${fx.label} · next match</small>${sw(fx.opp)}${nm(fx.opp)}</div>
-      <div class="stars">Keeper <b>${'●'.repeat(stars)}${'○'.repeat(5 - stars)}</b></div>
-      <p class="scouting"><b>${styleOf(TEAMS[fx.opp].style).label}.</b> ${styleOf(TEAMS[fx.opp].style).scout}</p>`;
-  }
-  const table = (title, group) => {
-    const order = standings(tour, group);
-    const rows = order.map((i, k) => {
-      const t = tour.table[i];
-      const gd = goalDifference(t);
-      return `<tr class="${k < 2 ? 'through' : ''} ${i === YOU ? 'me' : ''}"><td>${sw(i)}${TEAMS[i].code}</td><td>${t.p}</td><td>${t.w}</td><td>${t.l}</td><td>${gd > 0 ? '+' + gd : gd}</td><td>${t.pts}</td></tr>`;
-    }).join('');
-    return `<div><table class="cup-table"><caption>${title}</caption><thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  };
-  $('hubTables').innerHTML = table('Group A', tour.A) + table('Group B', tour.B);
-  const ko = $('hubKo');
-  ko.hidden = !tour.semis;
-  if (tour.semis) {
-    const played = (a, b) => tour.ko.find((m) => (m.a === a && m.b === b) || (m.a === b && m.b === a));
-    const line = (round, a, b) => {
-      const m = played(a, b);
-      const score = m ? (m.a === a ? `${m.ga}–${m.gb}` : `${m.gb}–${m.ga}`) : 'to play';
-      return `<div class="tie"><span><span class="rnd">${round}</span>${sw(a)}${nm(a)} v ${sw(b)}${nm(b)}</span><b>${score}</b></div>`;
-    };
-    let html = '<div class="lbl">Knockout</div>' + tour.semis.map((t) => line('Semifinal', t[0], t[1])).join('');
-    if (tour.final) html += line('Final', tour.final[0], tour.final[1]);
-    ko.innerHTML = html;
-  }
-  const done = tour.stage === 'champion' || tour.stage === 'out';
+  const v = hubView(tour);
+  $('hubEyebrow').textContent = v.eyebrow;
+  $('hubTitle').textContent = v.title;
+  $('hubNews').textContent = v.news;
+  $('hubFixture').hidden = !v.fixtureHtml;
+  if (v.fixtureHtml) $('hubFixture').innerHTML = v.fixtureHtml;
+  $('hubTables').innerHTML = v.tablesHtml;
+  $('hubKo').hidden = !v.koHtml;
+  if (v.koHtml) $('hubKo').innerHTML = v.koHtml;
+  const done = v.done;
   $('hubPlay').hidden = done;
   $('hubRestart').textContent = done ? 'Play the cup again' : 'Start a new cup';
   $('hubRestart').className = done ? 'go' : 'ghost';
@@ -859,7 +673,7 @@ const practiced = () => storage.getItem('penaltyNight.practiced') === '1';
 function finishPractice() {
   storage.setItem('penaltyNight.practiced', '1');
   match.phase = 'end';
-  $('practice').hidden = true; $('pauseBtn').hidden = true; $('diveMeter').hidden = true;
+  $('practice').hidden = true; $('pauseBtn').hidden = true; hud.diveMeter(null);
   hint(''); sfx.whistle(); sfx.roar(true);
   $('practiceDone').hidden = false;
   $('practicePlay').focus();
@@ -869,11 +683,17 @@ $('practicePlay').addEventListener('click', () => { initAudio(); $('practiceDone
 $('practiceAgain').addEventListener('click', () => { $('practiceDone').hidden = true; startPractice(); });
 $('practiceMenu').addEventListener('click', () => { $('practiceDone').hidden = true; match.phase = 'menu'; showPicker(); });
 
-// ---------------- keyboard play
-// Arrows move a target in the goal (the same keys for both roles).
-// Shooting: hold Space to fill the power meter, release to shoot; Z / X curl.
-// Keeping: Space dives to the target.
-const kb = { x: 0, y: 1.2, held: new Set(), charging: false, power: 0, curl: 0, active: false };
+// ---------------- keyboard play (input/keyboard.js)
+const keys = createKeyboardAim({
+  mode: () => {
+    if (paused || post) return null;
+    if (match.turn === 'you' && match.phase === 'aim') return 'shoot';
+    return canDive() ? 'keep' : null;
+  },
+  on: { shoot: (kick) => shoot(kick), dive: (x, y) => diveTo(x, y), wake: () => initAudio() },
+});
+const kb = keys.state;
+// The keyboard target: a ring in the goal mouth.
 const markerTex = world.canvasTexture(128, 128, (c, w, h) => {
   c.strokeStyle = '#f6e7a8'; c.lineWidth = 9;
   c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 12, 0, Math.PI * 2); c.stroke();
@@ -882,62 +702,21 @@ const markerTex = world.canvasTexture(128, 128, (c, w, h) => {
 const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, transparent: true, depthTest: false, fog: false }));
 marker.scale.set(0.55, 0.55, 1); marker.visible = false; marker.renderOrder = 10;
 scene.add(marker);
-const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
-const kbShooting = () => match.turn === 'you' && match.phase === 'aim' && !post;
-const kbKeeping = () => match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight') && !keeper.dive && !post;
-const CURL_TEXT = { '-1': ' · curl ←', 0: '', 1: ' · curl →' };
 function updateKeyboard(dt) {
-  const shooting = kbShooting(), keeping = kbKeeping();
-  if (shooting || keeping) {
-    let dx = (kb.held.has('ArrowRight') ? 1 : 0) - (kb.held.has('ArrowLeft') ? 1 : 0);
-    const dy = (kb.held.has('ArrowUp') ? 1 : 0) - (kb.held.has('ArrowDown') ? 1 : 0);
-    if (keeping) dx = -dx;          // facing the taker, screen right is world -x
-    kb.x = clamp(kb.x + dx * 3.2 * dt, -4.3, 4.3);
-    kb.y = clamp(kb.y + dy * 2.4 * dt, 0.15, 2.9);
-  }
-  if (kb.charging) kb.power = Math.min(1, kb.power + dt / 0.9);
-  marker.visible = kb.active && (shooting || keeping);
+  const m = keys.update(dt);
+  marker.visible = kb.active && !!m;
+  marker.position.set(kb.x, kb.y, m === 'keep' ? KEEPER_Z + 0.05 : 0);
   if (match.mode === 'practice' && kb.active !== kb.shownAsKeys && practice.step < LESSONS.length) { kb.shownAsKeys = kb.active; renderPractice(); }
-  marker.position.set(kb.x, kb.y, keeping ? KEEPER_Z + 0.05 : 0);
-  const pm = $('powerMeter');
-  pm.hidden = !(kb.active && shooting);
-  if (!pm.hidden) {
-    pm.style.setProperty('--fill', String(kb.power));
-    $('powerLabel').textContent = (kb.charging ? 'Power' : 'Hold Space') + CURL_TEXT[kb.curl];
-  }
+  hud.powerMeter(kb.active && m === 'shoot' ? kb : null);
 }
-function keyboardShoot() {
-  kb.charging = false;
-  const kick = keyboardKick(kb.x, kb.y, kb.power, kb.curl);
-  kick.spread = 0.1 + 0.3 * kb.power * kb.power;
-  kb.power = 0;
-  shoot(kick);
-}
-function handlePlayKey(e, k) {
-  if (ARROWS.includes(k)) { kb.held.add(k); kb.active = true; e.preventDefault(); return true; }
-  if (k === ' ' && kbShooting()) {
-    e.preventDefault(); kb.active = true;
-    if (!kb.charging && !e.repeat) { kb.charging = true; kb.power = 0; initAudio(); }
-    return true;
-  }
-  if (k === ' ' && kbKeeping()) { e.preventDefault(); kb.active = true; initAudio(); diveTo(kb.x, kb.y); return true; }
-  if ((k === 'z' || k === 'x') && kbShooting()) {
-    const want = k === 'z' ? -1 : 1;
-    kb.curl = kb.curl === want ? 0 : want; kb.active = true; e.preventDefault(); return true;
-  }
-  return false;
-}
-document.addEventListener('keyup', (e) => {
-  kb.held.delete(e.key);
-  if (e.key === ' ' && kb.charging) { e.preventDefault(); if (kbShooting() && !paused) keyboardShoot(); else kb.charging = false; }
-});
+document.addEventListener('keyup', (e) => keys.keyup(e));
 
 // ---------------- pause, restart, quit, settings
 let paused = false;
 const inMatch = () => match.phase === 'aim' || match.phase === 'runup' || match.phase === 'flight';
 function pause() {
   if (paused || !inMatch()) return;
-  paused = true; swipe = null; kb.charging = false; kb.held.clear();
+  paused = true; pointer.cancel(); keys.release();
   audio.suspend();
   $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : match.mode === 'practice' ? 'Paused · Practice' : 'Paused';
   $('pauseTitle').textContent = match.mode === 'practice' ? LESSONS[Math.min(practice.step, LESSONS.length - 1)].title : `${goals(match.you)} – ${goals(match.cpu)}`;
@@ -957,10 +736,11 @@ function resume() {
 }
 // Clear everything a kick leaves behind, so a restart or quit starts clean.
 function clearPitch() {
-  post = null; replay = null; rec = null; shot = null; swipe = null; party = false;
+  post = null; replays.clear(); shot = null; party = false;
+  pointer.cancel();
   clearTimeout(endTimer);
   endReplayLook(); feedbackCard.hide(); clearBanner(); hint('');
-  $('diveMeter').hidden = true; $('scout').hidden = true; $('coach').hidden = true;
+  hud.diveMeter(null); hud.hideScout(); $('coach').hidden = true;
   keeper.cheer = null; keeper.pending = null; keeper.dive = null;
   striker.root.visible = false; taker.root.visible = false;
   net.bulges.length = 0;
@@ -1006,8 +786,8 @@ $('pauseSettingsBtn').addEventListener('click', openSettings);
 $('settingsDone').addEventListener('click', closeSettings);
 
 // The game pauses itself when you switch tabs or windows.
-document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
-window.addEventListener('blur', pause);
+document.addEventListener('visibilitychange', () => { if (document.hidden && !devFrozen) pause(); });
+window.addEventListener('blur', () => { if (!devFrozen) pause(); });
 
 document.addEventListener('keydown', (e) => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -1025,7 +805,7 @@ document.addEventListener('keydown', (e) => {
     else if (k === 'v') { e.preventDefault(); requestReplay(); }
     return;
   }
-  handlePlayKey(e, k);
+  keys.keydown(e, k);
 });
 
 // ---------------- title: lights on, camera sweep, tap to play
@@ -1061,15 +841,11 @@ $('attract').addEventListener('click', () => {
 setLevel('pro');
 showRecord();
 
-// ------------------------------------------------------------------ camera (render/camera.js)
-const cam = createCameraDirector(camera);
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
   renderer.setSize(w, h, false);
   cam.resize(w, h);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  trail.width = w * dpr; trail.height = h * dpr;
-  tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pointer.resize(w, h, Math.min(window.devicePixelRatio || 1, 2));
 }
 window.addEventListener('resize', resize);
 resize();
@@ -1113,7 +889,7 @@ function tick(dt) {
     }
   }
   updateKeyboard(dt);
-  if (!replay) updateKeeper(keeper, sdt, time);
+  if (!replays.playing) updateKeeper(keeper, sdt, time);
 
   if (ball.moving) {
     const steps = Math.max(1, Math.ceil(sdt / (1 / 240)));
@@ -1121,18 +897,20 @@ function tick(dt) {
     for (let i = 0; i < steps; i++) {
       stepBall(ball, h);
       if (shot) shot.cool -= h;
-      collide(h);
+      collide();
     }
     ball.mesh.position.copy(ball.pos);
     ball.mesh.rotation.y += ball.spin * sdt;
     ball.mesh.rotation.x -= (ball.vel.z / R) * sdt * 0.15;
   }
 
-  if (shot && !replay) {
+  if (shot && !replays.playing) {
     shot.t += sdt;
-    if (!shot.done) { const k = judge(); if (k) resolve(k); }
+    if (!shot.done) { const k = judge(shot, ball); if (k) resolve(k); }
   }
-  if (rec && !replay && (match.phase === 'runup' || match.phase === 'flight') && (!post || post.t < 0.7)) recordFrame(sdt);
+  if (replays.recording && !replays.playing && (match.phase === 'runup' || match.phase === 'flight') && (!post || post.t < 0.7)) {
+    replays.record(sdt, keeper, match.turn === 'cpu' && match.phase === 'runup' ? match.timer : null);
+  }
   if (post) updatePost(dt);
 
   if (party && Math.random() < dt * 1.6) firework(Math.random() < 0.5 ? 0xf2c230 : 0xffffff);
@@ -1140,7 +918,7 @@ function tick(dt) {
   updateConfetti(dt, time);
   updateFireworks(dt);
   updateFlashes(dt);
-  updateNet(replay ? dt * 0.5 : sdt);
+  updateNet(replays.playing ? dt * 0.5 : sdt);
   if (motionReduced) { cheer.you = 0; cheer.cpu = 0; }
   cheer.you *= Math.exp(-dt * 0.7); cheer.cpu *= Math.exp(-dt * 0.7);
   updateCrowd(time);
@@ -1162,13 +940,13 @@ function tick(dt) {
   const keeperView = cam.goal === 'keeper' ? 1 : 0;
   goalFade += (keeperView - goalFade) * Math.min(1, dt * 6);
   world.setGoalFade(goalFade);
-  ballTracking.update(ball.pos, ball.moving && !replay, 0.45 + 0.55 * keeperView, dt);
+  ballTracking.update(ball.pos, ball.moving && !replays.playing, 0.45 + 0.55 * keeperView, dt);
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (!paused && !devFrozen) tick(dt);
   renderer.render(scene, camera);
-  drawTrail(dt);
+  pointer.draw(dt);
   requestAnimationFrame(frame);
 }
 
@@ -1186,30 +964,15 @@ if (import.meta.env.DEV) {
     get state() {
       return {
         phase: match.phase, turn: match.turn, mode: match.mode, you: [...match.you], cpu: [...match.cpu],
-        post: post && { kind: post.kind, t: post.t }, replay: !!replay, banner: $('bannerText').textContent,
+        post: post && { kind: post.kind, t: post.t }, replay: replays.playing, banner: $('bannerText').textContent,
         keeperDive: keeper.dive && { toX: keeper.dive.toX, t: keeper.dive.t }, ball: ball.pos.toArray(),
       };
     },
   };
 }
 
-function drawTrail(dt) {
-  const w = stage.clientWidth, h = stage.clientHeight;
-  tctx.clearRect(0, 0, w, h);
-  const pts = swipe || lastTrail;
-  if (swipe) lastTrail = swipe; else trailFade = Math.max(0, trailFade - dt * 2.5);
-  if (!pts || pts.length < 2 || trailFade <= 0) return;
-  tctx.lineCap = 'round'; tctx.lineJoin = 'round';
-  for (let i = 1; i < pts.length; i++) {
-    const a = i / pts.length;
-    tctx.strokeStyle = `rgba(246,231,168,${0.85 * a * trailFade})`;
-    tctx.lineWidth = 2 + 7 * a;
-    tctx.beginPath(); tctx.moveTo(pts[i - 1].x, pts[i - 1].y); tctx.lineTo(pts[i].x, pts[i].y); tctx.stroke();
-  }
-}
-let lastTrail = null;
 
-// opening scene: both keepers hidden, the CPU keeper waiting on his line
+// opening scene: both keepers hidden, the CPU keeper waiting on the line
 hideKeeper(keepers.you); taker.root.visible = false;
 keeper.active = true; poseKeeper(keeper);
 placeBall();
