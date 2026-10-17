@@ -9,6 +9,8 @@ export function createCameraDirector(camera) {
   const pos = new THREE.Vector3(-3.5, 2.1, 16.7), look = new THREE.Vector3(-4.2, 1.6, 0);
   const wantPos = new THREE.Vector3(), wantLook = new THREE.Vector3();
   let baseFov = 50;
+  let shake = 0;                       // a small jolt when the ball hits the frame
+  const jolt = new THREE.Vector3();
 
   const director = {
     goal: 'menu',
@@ -56,7 +58,9 @@ export function createCameraDirector(camera) {
       const rate = goal === 'menu' ? 1.5 : goal === 'pick' ? 1.8 : goal === 'replay' ? 6 : goal === 'celebrate' ? 4 : 3.2;
       const k = s.reduced ? 1 : 1 - Math.exp(-dt * rate);
       pos.lerp(wantPos, k); look.lerp(wantLook, k);
-      camera.position.copy(pos); camera.lookAt(look);
+      shake = s.reduced ? 0 : shake * Math.exp(-dt * 9);
+      jolt.set(Math.sin(time * 61), Math.sin(time * 47 + 1), 0).multiplyScalar(shake);
+      camera.position.copy(pos).add(jolt); camera.lookAt(look);
       const fov = goal === 'replay' ? baseFov * 0.66 : baseFov;
       if (Math.abs(camera.fov - fov) > 0.01) {
         camera.fov = s.reduced ? fov : lerp(camera.fov, fov, 1 - Math.exp(-dt * 5));
@@ -64,6 +68,7 @@ export function createCameraDirector(camera) {
       }
     },
     snap() { pos.copy(wantPos); look.copy(wantLook); },
+    shake(amount) { shake = Math.max(shake, amount); },
     resize(w, h) {
       camera.aspect = w / h;
       baseFov = w / h < 1 ? clamp(50 / (w / h) * 0.72, 50, 78) : 50;

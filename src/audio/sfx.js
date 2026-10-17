@@ -2,7 +2,11 @@
 // A looping band of filtered noise is the crowd; swells make it roar.
 export function createAudio() {
   let ac = null, master = null, crowdGain = null, noiseBuf = null, muted = false;
-    let volume = 0.9;
+  const volume = 0.9;
+  // The crowd's resting level. It drops while a kick is being lined up (a
+  // tense hush) and swells return to it.
+  const MURMUR = 0.05, HUSH = 0.02;
+  let base = MURMUR;
   function initAudio() {
     if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
     try {
@@ -13,7 +17,7 @@ export function createAudio() {
       for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
       const src = ac.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
       const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 650; bp.Q.value = 0.6;
-      crowdGain = ac.createGain(); crowdGain.gain.value = 0.05;
+      crowdGain = ac.createGain(); crowdGain.gain.value = base;
       src.connect(bp); bp.connect(crowdGain); crowdGain.connect(master); src.start();
     } catch (e) { ac = null; }
   }
@@ -38,7 +42,14 @@ export function createAudio() {
     const t = ac.currentTime, g = crowdGain.gain;
     g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
     g.linearRampToValueAtTime(level, t + 0.25); g.linearRampToValueAtTime(level * 0.8, t + 0.25 + hold);
-    g.linearRampToValueAtTime(0.05, t + 1.2 + hold);
+    g.linearRampToValueAtTime(base, t + 1.2 + hold);
+  }
+  function settle(level, seconds) {
+    base = level;
+    if (!crowdGain) return;
+    const t = ac.currentTime, g = crowdGain.gain;
+    g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(level, t + seconds);
   }
   const sfx = {
     kick(p) { tone('sine', 150, 42, 0.16, 0.9 * p + 0.2); noise(0.05, 2400, 0.8, 0.35); },
@@ -49,6 +60,20 @@ export function createAudio() {
     roar(big) { swell(big ? 0.5 : 0.28, big ? 1.4 : 0.6); },
     groan() { swell(0.16, 0.4); noise(1.2, 300, 0.5, 0.12, 'lowpass'); },
     pop() { noise(0.5, 380, 0.6, 0.28, 'lowpass'); noise(0.9, 4200, 0.5, 0.05); },
+    // One short blast: the referee's signal before each kick.
+    signal() { tone('sine', 2900, 3000, 0.22, 0.08); },
+    // The crowd goes quiet while a kick is lined up, and murmurs again after.
+    hush(on) { settle(on ? HUSH : MURMUR, on ? 1.2 : 0.6); },
+    // The taker's plant foot: a soft thud on the grass (the gold bar moment).
+    plant() { tone('sine', 90, 55, 0.12, 0.35); noise(0.06, 500, 0.7, 0.12, 'lowpass'); },
+    // A keeper launching into a dive.
+    dive() { noise(0.28, 1400, 0.5, 0.1); },
+    // The keeper landing on the grass.
+    land() { tone('sine', 70, 45, 0.18, 0.3); noise(0.12, 300, 0.6, 0.15, 'lowpass'); },
+    // The result card appearing.
+    blip() { tone('sine', 880, 990, 0.08, 0.05); },
+    // A practice lesson passed.
+    chime() { tone('triangle', 660, 660, 0.25, 0.12); tone('triangle', 990, 990, 0.35, 0.1, 0.12); },
   };
 
   return {

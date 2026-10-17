@@ -2,6 +2,7 @@
 // crowd and floodlights. Everything here is scenery; gameplay lives elsewhere.
 import * as THREE from 'three';
 import { HALF, GOAL_H, POST_R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, netDepth } from '../core/constants.js';
+import { BufferGeometryUtils } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { rand } from '../core/visual-random.js';
 
 export function createWorld(canvas) {
@@ -193,18 +194,21 @@ export function createWorld(canvas) {
 
   const standMat = new THREE.MeshStandardMaterial({ color: 0x1a1f30, roughness: 0.9 });
   const crowdSpots = [];
+  // All stand tiers are merged into one mesh: one draw call instead of fifty.
+  const tierGeos = [];
+  const addTier = (w, h, d, x, y, z) => tierGeos.push(new THREE.BoxGeometry(w, h, d).translate(x, y, z));
   for (let r = 0; r < 22; r++) {
     const z = -7.2 - r * 0.8, y = 0.7 + r * 0.45;
-    const tier = new THREE.Mesh(new THREE.BoxGeometry(76, y, 0.8), standMat);
-    tier.position.set(0, y / 2, z); scene.add(tier);
+    addTier(76, y, 0.8, 0, y / 2, z);
     for (let x = -36; x < 36; x += 0.55) if (Math.random() > 0.1) crowdSpots.push({ x: x + rand(-0.1, 0.1), y, z: z + 0.1, rot: 0, side: x < 0 ? 'you' : 'cpu' });
   }
   for (const s of [-1, 1]) for (let r = 0; r < 14; r++) {
     const x = s * (38 + r * 0.8), y = 0.7 + r * 0.45;
-    const tier = new THREE.Mesh(new THREE.BoxGeometry(0.8, y, 62), standMat);
-    tier.position.set(x, y / 2, 22); scene.add(tier);
+    addTier(0.8, y, 62, x, y / 2, 22);
     for (let z = -8; z < 52; z += 0.6) if (Math.random() > 0.15) crowdSpots.push({ x: x - s * 0.1, y, z: z + rand(-0.1, 0.1), rot: -s * Math.PI / 2, side: 'mix' });
   }
+  scene.add(new THREE.Mesh(BufferGeometryUtils.mergeBufferGeometries(tierGeos), standMat));
+  tierGeos.forEach((g) => g.dispose());
   const crowd = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.44, 0.64),
     new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), crowdSpots.length);
   const dummy = new THREE.Object3D();

@@ -40,6 +40,8 @@ body { background: var(--night); color: var(--ink); font-family: var(--body); ov
 .dots li { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(238, 241, 248, 0.35); }
 .dots li.goal { background: #4cd37a; border-color: #4cd37a; box-shadow: 0 0 8px rgba(76, 211, 122, 0.7); }
 .dots li.miss { background: var(--bad); border-color: var(--bad); }
+.dots li.fresh { animation: dot-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes dot-pop { from { transform: scale(0.2); } 60% { transform: scale(1.5); } to { transform: scale(1); } }
 .round { grid-column: 1 / -1; text-align: center; font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
 
 #banner { position: absolute; left: 0; right: 0; top: 24%; text-align: center; pointer-events: none; padding-inline: 16px; }

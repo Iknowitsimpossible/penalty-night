@@ -127,6 +127,7 @@ export function updateKeeper(k, dt, time) {
       const q = Math.min((d.t - d.dur - 0.3) / 0.35, 1);
       k.tilt = lerp(d.tilt, d.side * 1.48, q);
       k.y = lerp(d.toY, 0.16, q);
+      if (q >= 1 && !d.landed) { d.landed = true; if (k.onLand) k.onLand(); }   // e.g. a thud on the grass
     }
   }
   poseKeeper(k);

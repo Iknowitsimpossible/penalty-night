@@ -13,6 +13,7 @@ import { newShot, collideStep, judge } from './physics/collisions.js';
 import { createBallMesh, createBallTracking } from './render/ball.js';
 import { createCameraDirector } from './render/camera.js';
 import { createReplays } from './render/replay.js';
+import { createQualityGovernor } from './render/quality.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
@@ -83,7 +84,8 @@ const keepers = { cpu: makePerson(scene, KITS.cpuKeeper), you: makePerson(scene,
 const taker = makePerson(scene, KITS.cpuTaker);
 const striker = makePerson(scene, KITS.youTaker);   // you: only seen in replays and celebrations
 striker.root.visible = false;
-let keeper = newKeeper(keepers.cpu);
+const withLanding = (k) => { k.onLand = () => sfx.land(); return k; };
+let keeper = withLanding(newKeeper(keepers.cpu));
 
 // ------------------------------------------------------------------ ball (physics/ball.js, render/ball.js)
 const ball = { ...createBallState(), mesh: createBallMesh(world) };
@@ -104,9 +106,9 @@ function launch(target, T, spin) {
 function collide() {
   if (!shot) return;
   collideStep(ball, shot, keeper.active ? keeperSpheres(keeper) : null, rng, {
-    post: () => sfx.post(),
-    save: () => sfx.save(),
-    net: (p, v, strength) => { bulgeNet(p, v, strength); sfx.net(); },
+    post: () => { sfx.post(); cam.shake(0.06); },
+    save: () => { sfx.save(); cam.shake(0.035); },
+    net: (p, v, strength) => { bulgeNet(p, v, strength); sfx.net(); cam.shake(0.02); },
   });
 }
 
@@ -185,13 +187,19 @@ function nextTurn() {
   if (match.you.length === match.cpu.length) setupYourKick(); else setupCpuKick();
 }
 
+// Before each kick: the referee's signal and a hush in the crowd.
+function lineUp() {
+  if (match.you.length + match.cpu.length > 0 || match.mode === 'practice') sfx.signal();
+  sfx.hush(true);
+}
 function setupYourKick() {
   match.turn = 'you'; match.phase = 'aim'; shot = null;
+  lineUp();
   keys.reset(1.2);
   hud.diveMeter(null);
   placeBall();
   hideKeeper(keepers.you); keepers.cpu.root.visible = true;
-  keeper = newKeeper(keepers.cpu); keeper.active = true; keeper.maxShift = level.shift;
+  keeper = withLanding(newKeeper(keepers.cpu)); keeper.active = true; keeper.maxShift = level.shift;
   taker.root.visible = false; striker.root.visible = false;
   cam.goal = 'shoot';
   if (match.mode === 'practice') {
@@ -215,11 +223,12 @@ function renderDiveMeter() {
 
 function setupCpuKick() {
   match.turn = 'cpu'; match.phase = 'runup'; match.timer = 0; shot = null;
+  lineUp();
   match.plan = planShot(match.opp.style, rng); match.dive = null; match.committed = false;
   keys.reset(1.0);
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
-  keeper = newKeeper(keepers.you); keeper.active = true; keeper.maxShift = 1.85;
+  keeper = withLanding(newKeeper(keepers.you)); keeper.active = true; keeper.maxShift = 1.85;
   taker.root.visible = true; striker.root.visible = false;
   animateRunup(taker, 0);
   startRecording(false);
@@ -279,7 +288,7 @@ function shoot(kick) {
   // Keyboard aim is pixel-perfect, so harder keyboard kicks spread a little.
   const spread = kick.spread || 0;
   launch(new THREE.Vector3(aimX + rng.gauss() * spread, Math.max(0.11, aimY + rng.gauss() * spread * 0.7), 0), T, spin);
-  sfx.kick(kick.power);
+  sfx.kick(kick.power); sfx.hush(false);
   startShot();
   shot.intent = kick;
   // The keeper's one decision: a guess at the strike or a read after its reaction time.
@@ -314,6 +323,7 @@ function playerDive(e) {
 // against the ball's flight.
 function diveTo(x, y) {
   planDive(keeper, x, y);
+  sfx.dive();
   const at = match.phase === 'runup' ? match.timer : RUNUP + (shot ? shot.t : 0);
   match.dive = { x, y, at, early: at < COMMIT };
   hint('');
@@ -322,7 +332,7 @@ function diveTo(x, y) {
 function cpuShoot() {
   const k = executeShot(match.plan, match.opp.style, level, rng);
   launch(new THREE.Vector3(k.target.x, k.target.y, 0), k.T, k.spin);
-  sfx.kick(0.7);
+  sfx.kick(0.7); sfx.hush(false);
   startShot();
   shot.cpu = { target: k.target, T: k.T, plan: match.plan };
 }
@@ -363,7 +373,7 @@ function resolvePractice(kind, mine) {
   const res = checkLesson(lesson.id, {
     kind, spot: ballSpot(), intent: shot.intent, dive: match.dive, flight: shot.cpu ? shot.cpu.T : 0.65,
   });
-  if (res.ok) { banner('Nice!', lesson.title + ' done', 'good'); sfx.roar(false); practice.step++; }
+  if (res.ok) { banner('Nice!', lesson.title + ' done', 'good'); sfx.roar(false); sfx.chime(); practice.step++; }
   else { banner('Try again', lesson.title, 'info', 1200); }
   startCelebration(kind, mine, kind === 'goal');
   post.autoReplay = false;
@@ -442,6 +452,7 @@ function updatePost(dt) {
   if (post.feedback && post.t >= 0.55 && !feedbackCard.visible && !post.cardShown) {
     post.cardShown = true;
     feedbackCard.show(post.feedback, { canReplay: canReplay() });
+    sfx.blip();
   }
   if (post.cardShown) feedbackCard.progress((post.t - 0.55) / (post.dur - 0.55));
   if (post.t >= post.dur) {
@@ -518,6 +529,7 @@ function endReplayLook() {
 let endTimer = 0;
 function endMatch(w) {
   match.phase = 'end';
+  sfx.hush(false);
   hud.diveMeter(null); hud.hideScout();
   const gy = goals(match.you), gc = goals(match.cpu);
   const sd = match.you.length > 5;
@@ -728,6 +740,7 @@ function resume() {
 }
 // Clear everything a kick leaves behind, so a restart or quit starts clean.
 function clearPitch() {
+  sfx.hush(false);
   post = null; replays.clear(); shot = null; party = false;
   pointer.cancel();
   clearTimeout(endTimer);
@@ -865,6 +878,9 @@ function tick(dt) {
     // The plant foot: the taker's last look at the keeper, then the shot is locked.
     if (!match.committed && match.timer >= COMMIT) {
       match.committed = true;
+      sfx.plant();
+      const f = taker.root.position;
+      burstConfetti(f.x + 0.15, 0.1, f.z, 0.15, 12, [0x2f6b35, 0x4d8a45, 0x6b5a3a], 2.4);
       match.plan = reconsider(match.plan, match.dive && match.dive.early ? match.dive : null, match.opp.style, level, rng);
     }
     if (match.timer >= RUNUP) cpuShoot();
@@ -877,6 +893,7 @@ function tick(dt) {
       const pd = keeper.pending; keeper.pending = null;
       const target = pd.kind === 'read' ? readDive(predictCrossing(ball, pd.readSpin), level, match.opp.style, rng) : { x: pd.x, y: pd.y };
       planDive(keeper, target.x, target.y, target.speed);
+      sfx.dive();
       shot.keeper.target = target;
     }
   }
@@ -934,10 +951,20 @@ function tick(dt) {
   world.setGoalFade(goalFade);
   ballTracking.update(ball.pos, ball.moving && !replays.playing, 0.45 + 0.55 * keeperView, dt);
 }
+const quality = createQualityGovernor(Math.min(window.devicePixelRatio || 1, 2));
+let pausedFrames = 0;
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
   if (!paused && !devFrozen) tick(dt);
-  renderer.render(scene, camera);
+  // While paused the picture is still: draw a couple of frames, then rest.
+  pausedFrames = paused ? pausedFrames + 1 : 0;
+  if (pausedFrames < 3) {
+    renderer.render(scene, camera);
+    if (!devFrozen) {
+      const ratio = quality.update(raw);
+      if (ratio) { renderer.setPixelRatio(ratio); resize(); }
+    }
+  }
   pointer.draw(dt);
   requestAnimationFrame(frame);
 }
@@ -952,6 +979,18 @@ if (import.meta.env.DEV) {
     },
     seed(n) { Object.assign(rng, createRng(n)); },
     freeze(on = true) { devFrozen = on; },
+    // Average milliseconds for tick + render over n frames (rendering forced each frame).
+    bench(n = 120) {
+      const gl = renderer.getContext();
+      let tickMs = 0, renderMs = 0;
+      for (let i = 0; i < n; i++) {
+        const t0 = performance.now(); tick(1 / 60);
+        const t1 = performance.now(); renderer.render(scene, camera); gl.finish();
+        tickMs += t1 - t0; renderMs += performance.now() - t1;
+      }
+      const info = renderer.info.render;
+      return { tick: +(tickMs / n).toFixed(2), render: +(renderMs / n).toFixed(2), calls: info.calls, triangles: info.triangles, dpr: renderer.getPixelRatio() };
+    },
     get paused() { return paused; },
     get state() {
       return {

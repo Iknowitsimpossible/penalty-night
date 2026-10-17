@@ -102,21 +102,33 @@ export function createEffects(world, opts) {
     fwAlive = alive;
   }
 
-  // Phone camera flashes popping in the stands.
-  const flashes = [];
-  for (let i = 0; i < 60; i++) {
+  // Phone camera flashes popping in the stands: one point cloud (one draw
+  // call) whose colours fade to black, which additive blending hides.
+  const FLASH_N = 60;
+  const flashPos = new Float32Array(FLASH_N * 3), flashCol = new Float32Array(FLASH_N * 3), flashLevel = new Float32Array(FLASH_N);
+  for (let i = 0; i < FLASH_N; i++) {
     const spot = crowdSpots[(Math.random() * crowdSpots.length) | 0];
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
-    sp.position.set(spot.x, spot.y + 0.7, spot.z + 0.15); sp.scale.set(1.1, 1.1, 1);
-    scene.add(sp); flashes.push(sp);
+    flashPos[i * 3] = spot.x; flashPos[i * 3 + 1] = spot.y + 0.7; flashPos[i * 3 + 2] = spot.z + 0.15;
   }
-  let flashRate = 0;
+  const flashGeo = new THREE.BufferGeometry();
+  flashGeo.setAttribute('position', new THREE.BufferAttribute(flashPos, 3));
+  flashGeo.setAttribute('color', new THREE.BufferAttribute(flashCol, 3));
+  const flashPoints = new THREE.Points(flashGeo, new THREE.PointsMaterial({ size: 1.1, map: glowTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+  flashPoints.frustumCulled = false;
+  scene.add(flashPoints);
+  let flashRate = 0, flashesLit = false;
   function updateFlashes(dt) {
     flashRate *= Math.exp(-dt * 0.5);
-    for (const f of flashes) {
-      if (Math.random() < flashRate * dt / flashes.length * 6) f.material.opacity = 1;
-      else f.material.opacity *= Math.exp(-dt * 16);
+    if (flashRate < 0.05 && !flashesLit) return;
+    let lit = false;
+    for (let i = 0; i < FLASH_N; i++) {
+      if (Math.random() < flashRate * dt / FLASH_N * 6) flashLevel[i] = 1;
+      else flashLevel[i] *= Math.exp(-dt * 16);
+      if (flashLevel[i] > 0.01) lit = true;
+      flashCol[i * 3] = flashCol[i * 3 + 1] = flashCol[i * 3 + 2] = flashLevel[i];
     }
+    flashGeo.attributes.color.needsUpdate = true;
+    flashesLit = lit;
   }
 
   return {

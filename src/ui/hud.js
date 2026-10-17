@@ -11,11 +11,15 @@ export function createHud($) {
   let bannerTimer = 0, scoutTimer = 0;
   $('diveMeter').style.setProperty('--commit', String(COMMIT / RUNUP));
 
+  // The newest result pops in, so you see which dot just changed.
+  const shown = new Map();
   const fillDots = (el, arr) => {
     const n = Math.max(5, arr.length + (arr.length >= 5 ? 1 : 0));
+    const fresh = arr.length > (shown.get(el) ?? 0) ? arr.length - 1 : -1;
+    shown.set(el, arr.length);
     el.replaceChildren(...Array.from({ length: n }, (_, i) => {
       const li = document.createElement('li');
-      if (i < arr.length) li.className = arr[i] ? 'goal' : 'miss';
+      if (i < arr.length) li.className = (arr[i] ? 'goal' : 'miss') + (i === fresh ? ' fresh' : '');
       return li;
     }));
   };
