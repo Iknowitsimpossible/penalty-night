@@ -45,6 +45,7 @@
   </section>
   <aside id="scout" hidden aria-live="polite"><small>Scouting</small><b id="scoutLabel"></b><span id="scoutText"></span></aside>
   <button id="mute" type="button">Sound on</button>
+  <button id="pauseBtn" type="button" aria-label="Pause (P)" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4" width="3.4" height="12" rx="1"/><rect x="11.6" y="4" width="3.4" height="12" rx="1"/></svg></button>
 
   <section class="screen" id="menu">
     <button class="attract" id="attract" type="button" aria-label="Tap to play">
@@ -81,6 +82,7 @@
       </div>
     </div>
     <p class="corner" id="record"></p>
+    <button class="corner-btn" id="settingsBtn" type="button" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg></button>
   </section>
 
   <div id="coach" hidden><svg viewBox="0 0 120 220" aria-hidden="true"><path d="M60 205 C 95 150, 80 80, 38 12"/></svg><span class="tip"></span></div>
@@ -111,6 +113,40 @@
         <button class="ghost" id="hubMenu" type="button">Main menu</button>
       </div>
       <button class="ghost" id="hubRestart" type="button">Start a new cup</button>
+    </div>
+  </section>
+
+  <section class="overlay" id="pause" hidden role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
+    <div class="card">
+      <p class="eyebrow" id="pauseEyebrow">Paused</p>
+      <h1 class="mid" id="pauseTitle">0 – 0</h1>
+      <p class="lede" id="pauseScout"></p>
+      <button class="go" id="resumeBtn" type="button">Resume <kbd>P</kbd></button>
+      <div class="row">
+        <button class="ghost" id="restartBtn" type="button">Restart match <kbd>R</kbd></button>
+        <button class="ghost" id="quitBtn" type="button">Quit <kbd>Q</kbd></button>
+      </div>
+      <button class="ghost" id="pauseSettingsBtn" type="button">Settings <kbd>S</kbd></button>
+      <details class="keys">
+        <summary>Keyboard controls</summary>
+        <dl>
+          <dt>Arrows</dt><dd>Move the target in the goal</dd>
+          <dt>Hold Space</dt><dd>Fill power, release to shoot</dd>
+          <dt>Z / X</dt><dd>Curl left / right</dd>
+          <dt>Space</dt><dd>Dive to the target when keeping</dd>
+          <dt>V</dt><dd>Replay the last kick</dd>
+          <dt>P / Esc</dt><dd>Pause</dd>
+        </dl>
+      </details>
+    </div>
+  </section>
+
+  <section class="overlay" id="settings" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="card">
+      <p class="eyebrow">Penalty Night</p>
+      <h1 class="mid" id="settingsTitle">Settings</h1>
+      <div class="set-list" id="settingsList"></div>
+      <button class="go" id="settingsDone" type="button">Done</button>
     </div>
   </section>
 

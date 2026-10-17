@@ -16,6 +16,7 @@ import { keeperPlan, readDive } from './ai/keeper.js';
 import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { explainKick, explainSave } from './feedback/explain.js';
 import { createFeedbackCard } from './ui/feedback-card.js';
+import { createSettingsPanel } from './ui/settings-panel.js';
 import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength } from './ui/settings.js';
 import { TEAMS, YOU, createCup, recordResult, standings, currentFixture, goalDifference, teamName } from './tournament/cup.js';
 
@@ -146,10 +147,17 @@ function hitFrame() {
 const audio = createAudio();
 const sfx = audio.sfx;
 const initAudio = audio.init;
+function applySound() {
+  audio.setMuted(!settings.sound);
+  $('mute').textContent = settings.sound ? 'Sound on' : 'Sound off';
+}
 $('mute').addEventListener('click', () => {
-  audio.setMuted(!audio.muted);
-  $('mute').textContent = audio.muted ? 'Sound off' : 'Sound on';
+  settings.sound = !settings.sound;
+  saveSettings(storage, settings);
+  applySound();
+  settingsPanel.sync();
 });
+applySound();
 
 // ------------------------------------------------------------------ match
 const match = { level: 'pro', you: [], cpu: [], turn: 'you', phase: 'menu', timer: 0, plan: null, dive: null, committed: false };
@@ -186,6 +194,10 @@ function banner(text, sub, tone, holdMs) {
   bannerTimer = setTimeout(() => { $('bannerText').textContent = ''; $('bannerSub').textContent = ''; }, holdMs || 1700);
 }
 const hint = (t) => { $('hint').textContent = t; };
+function clearBanner() {
+  clearTimeout(bannerTimer);
+  $('bannerText').textContent = ''; $('bannerSub').textContent = '';
+}
 
 // The opponent decides how good their keeper and takers are, their kit,
 // and the colour of their half of the crowd.
@@ -212,7 +224,7 @@ function startMatch(o) {
   $('hub').hidden = true;
   party = false; post = null; replay = null; rec = null; endReplayLook();
   match.you = []; match.cpu = [];
-  $('menu').hidden = true; $('end').hidden = true; $('hud').hidden = false;
+  $('menu').hidden = true; $('end').hidden = true; $('hud').hidden = false; $('pauseBtn').hidden = false;
   showScout(o, 6);
   sfx.whistle();
   nextTurn();
@@ -292,16 +304,11 @@ function stagePoint(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top, t: performance.now() };
 }
 let coached = false;
-try { coached = localStorage.getItem('penaltyNight.coached') === '1'; } catch (e) { /* storage unavailable */ }
+try { coached = storage.getItem('penaltyNight.coached') === '1'; } catch (e) { /* storage unavailable */ }
 function trySkip() {
   if (post && (replay || post.t > 0.5)) { finishPost(); return true; }
   return !!post;
 }
-document.addEventListener('keydown', (e) => {
-  if (!post) return;
-  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); trySkip(); }
-  else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); requestReplay(); }
-});
 canvas.addEventListener('pointerdown', (e) => {
   initAudio();
   if (trySkip()) return;
@@ -337,7 +344,7 @@ function takeKick(pts) {
 function markCoached() {
   if (coached) return;
   coached = true; $('coach').hidden = true;
-  try { localStorage.setItem('penaltyNight.coached', '1'); } catch (err) { /* storage unavailable */ }
+  try { storage.setItem('penaltyNight.coached', '1'); } catch (err) { /* storage unavailable */ }
 }
 function shoot(kick) {
   markCoached();
@@ -611,6 +618,7 @@ function endReplayLook() {
   $('replayTag').hidden = true; $('skipTag').hidden = true; $('skipTag').classList.add('low');
 }
 
+let endTimer = 0;
 function endMatch(w) {
   match.phase = 'end';
   $('diveMeter').hidden = true; $('scout').hidden = true;
@@ -630,13 +638,14 @@ function endMatch(w) {
     const record = loadRecord(); record[w === 'you' ? 'w' : 'l']++; saveRecord(record);
   }
   hint(''); sfx.whistle(); if (w === 'you') { sfx.roar(true); party = true; effects.setFlashRate(40); }
-  setTimeout(() => { $('end').hidden = false; $('hud').hidden = true; }, 900);
+  $('pauseBtn').hidden = true;
+  endTimer = setTimeout(() => { $('end').hidden = false; $('hud').hidden = true; }, 900);
 }
 
 function loadRecord() {
-  try { return JSON.parse(localStorage.getItem('penaltyNight.record')) || { w: 0, l: 0 }; } catch (e) { return { w: 0, l: 0 }; }
+  try { return JSON.parse(storage.getItem('penaltyNight.record')) || { w: 0, l: 0 }; } catch (e) { return { w: 0, l: 0 }; }
 }
-function saveRecord(r) { try { localStorage.setItem('penaltyNight.record', JSON.stringify(r)); } catch (e) { /* storage unavailable */ } }
+function saveRecord(r) { try { storage.setItem('penaltyNight.record', JSON.stringify(r)); } catch (e) { /* storage unavailable */ } }
 function showRecord() {
   const live = tour && tour.stage !== 'champion' && tour.stage !== 'out';
   $('tourLabel').textContent = live ? 'Continue cup' : 'Night Cup';
@@ -644,7 +653,7 @@ function showRecord() {
     : tour.stage === 'group' ? `Matchday ${tour.day + 1} of 3`
     : tour.stage === 'semi' ? 'Semifinal next' : 'The final is next';
   const r = loadRecord();
-  let cups = 0; try { cups = +localStorage.getItem('penaltyNight.cups') || 0; } catch (e) { /* storage unavailable */ }
+  let cups = 0; try { cups = +storage.getItem('penaltyNight.cups') || 0; } catch (e) { /* storage unavailable */ }
   $('record').textContent = r.w + r.l || cups
     ? `${r.w}W · ${r.l}L${cups ? ` · ${cups} cup${cups > 1 ? 's' : ''}` : ''}`
     : '';
@@ -663,11 +672,11 @@ function paramsFor(r) {
 let tour = loadCup();
 function loadCup() {
   try {
-    const t = JSON.parse(localStorage.getItem('penaltyNight.cup'));
+    const t = JSON.parse(storage.getItem('penaltyNight.cup'));
     return t && t.table && t.A && t.B ? t : null;
   } catch (e) { return null; }
 }
-function saveCup() { try { localStorage.setItem('penaltyNight.cup', JSON.stringify(tour)); } catch (e) { /* storage unavailable */ } }
+function saveCup() { try { storage.setItem('penaltyNight.cup', JSON.stringify(tour)); } catch (e) { /* storage unavailable */ } }
 function newCup() {
   tour = createCup(rng);
   saveCup();
@@ -684,7 +693,7 @@ const nm = teamName;
 function cupAfterMatch(gy, gc) {
   const line = recordResult(tour, gy, gc, rng);
   if (tour.stage === 'champion') {
-    try { localStorage.setItem('penaltyNight.cups', String((+localStorage.getItem('penaltyNight.cups') || 0) + 1)); } catch (e) { /* storage unavailable */ }
+    try { storage.setItem('penaltyNight.cups', String((+storage.getItem('penaltyNight.cups') || 0) + 1)); } catch (e) { /* storage unavailable */ }
   }
   saveCup();
   return line;
@@ -757,6 +766,97 @@ $('hubPlay').addEventListener('click', () => { initAudio(); playCupMatch(); });
 $('hubMenu').addEventListener('click', () => { $('hub').hidden = true; party = false; showPicker(); });
 $('hubRestart').addEventListener('click', () => { newCup(); showHub(); });
 $('toMenu').addEventListener('click', () => { $('end').hidden = true; match.phase = 'menu'; party = false; showPicker(); });
+
+// ---------------- pause, restart, quit, settings
+let paused = false;
+const inMatch = () => match.phase === 'aim' || match.phase === 'runup' || match.phase === 'flight';
+function pause() {
+  if (paused || !inMatch()) return;
+  paused = true; swipe = null;
+  audio.suspend();
+  $('pauseTitle').textContent = `${goals(match.you)} – ${goals(match.cpu)}`;
+  $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : 'Paused';
+  const st = match.opp && match.opp.style ? styleOf(match.opp.style) : null;
+  $('pauseScout').textContent = st ? `${st.label}: ${st.scout}` : '';
+  $('quitBtn').firstChild.textContent = match.mode === 'cup' ? 'Back to cup ' : 'Quit to menu ';
+  $('pause').hidden = false;
+  $('resumeBtn').focus();
+}
+function resume() {
+  if (!paused) return;
+  paused = false;
+  $('pause').hidden = true; $('settings').hidden = true;
+  audio.resume();
+  last = performance.now();
+}
+// Clear everything a kick leaves behind, so a restart or quit starts clean.
+function clearPitch() {
+  post = null; replay = null; rec = null; shot = null; swipe = null; party = false;
+  clearTimeout(endTimer);
+  endReplayLook(); feedbackCard.hide(); clearBanner(); hint('');
+  $('diveMeter').hidden = true; $('scout').hidden = true; $('coach').hidden = true;
+  keeper.cheer = null; keeper.pending = null; keeper.dive = null;
+  striker.root.visible = false; taker.root.visible = false;
+  net.bulges.length = 0;
+  placeBall();
+}
+function restartMatch() {
+  const o = match.opp;
+  resume(); clearPitch();
+  startMatch(o);
+}
+// Quitting a cup match leaves the fixture unplayed: back to the hub.
+function quitMatch() {
+  const cup = match.mode === 'cup';
+  resume(); clearPitch();
+  $('hud').hidden = true; $('pauseBtn').hidden = true;
+  match.phase = 'menu';
+  if (cup) showHub(); else showPicker();
+}
+$('pauseBtn').addEventListener('click', pause);
+$('resumeBtn').addEventListener('click', resume);
+$('restartBtn').addEventListener('click', restartMatch);
+$('quitBtn').addEventListener('click', quitMatch);
+
+const settingsPanel = createSettingsPanel($('settingsList'), settings, (key) => {
+  saveSettings(storage, settings);
+  if (key === 'sound') applySound();
+});
+let settingsReturn = null;
+function openSettings() {
+  settingsReturn = document.activeElement;
+  settingsPanel.sync();
+  $('settings').hidden = false;
+  $('settingsDone').focus();
+}
+function closeSettings() {
+  $('settings').hidden = true;
+  if (settingsReturn && settingsReturn.focus) settingsReturn.focus();
+}
+$('settingsBtn').addEventListener('click', openSettings);
+$('pauseSettingsBtn').addEventListener('click', openSettings);
+$('settingsDone').addEventListener('click', closeSettings);
+
+// The game pauses itself when you switch tabs or windows.
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+window.addEventListener('blur', pause);
+
+document.addEventListener('keydown', (e) => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (!$('settings').hidden) { if (k === 'Escape') { e.preventDefault(); closeSettings(); } return; }
+  if (paused) {
+    if (k === 'Escape' || k === 'p') { e.preventDefault(); resume(); }
+    else if (k === 'r') { e.preventDefault(); restartMatch(); }
+    else if (k === 'q') { e.preventDefault(); quitMatch(); }
+    else if (k === 's') { e.preventDefault(); openSettings(); }
+    return;
+  }
+  if ((k === 'Escape' || k === 'p') && inMatch()) { e.preventDefault(); pause(); return; }
+  if (post) {
+    if (k === ' ' || k === 'Enter') { e.preventDefault(); trySkip(); }
+    else if (k === 'v') { e.preventDefault(); requestReplay(); }
+  }
+});
 
 // ---------------- title: lights on, camera sweep, tap to play
 let intro = null;
@@ -849,6 +949,7 @@ resize();
 
 // ------------------------------------------------------------------ main loop
 let last = performance.now(), time = 0, timeScale = 1;
+let devFrozen = false;   // development only: stop real time so tests can step exactly
 // Advance the whole game by dt seconds. Rendering happens separately, so
 // tests can step the game at a fixed rate without a screen refresh.
 function tick(dt) {
@@ -936,7 +1037,7 @@ function tick(dt) {
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  tick(dt);
+  if (!paused && !devFrozen) tick(dt);
   renderer.render(scene, camera);
   drawTrail(dt);
   requestAnimationFrame(frame);
@@ -951,6 +1052,8 @@ if (import.meta.env.DEV) {
       renderer.render(scene, camera);
     },
     seed(n) { Object.assign(rng, createRng(n)); },
+    freeze(on = true) { devFrozen = on; },
+    get paused() { return paused; },
     get state() {
       return {
         phase: match.phase, turn: match.turn, mode: match.mode, you: [...match.you], cpu: [...match.cpu],
