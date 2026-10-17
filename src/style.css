@@ -338,3 +338,31 @@ kbd { font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--l
 #stage.reduce-motion *, #stage.reduce-motion *::before, #stage.reduce-motion *::after {
   animation: none !important; transition: none !important;
 }
+
+/* Practice */
+.practice-btn {
+  grid-column: 1 / -1; position: relative; display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 4px 12px;
+  text-align: left; cursor: pointer; padding: 14px 18px; min-height: 52px; border-radius: 10px; color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(8, 12, 24, 0.78);
+  animation: lift 0.55s 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both; transition: border-color 0.18s ease;
+}
+.practice-btn:hover, .practice-btn:focus-visible { border-color: var(--cpu); }
+.practice-btn b { font: 900 16px var(--display); text-transform: uppercase; letter-spacing: 0.02em; }
+.practice-btn small { font: 500 12px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.practice-btn .badge {
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  font: 700 10px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--night);
+  background: var(--cpu); border-radius: 999px; padding: 4px 9px;
+}
+@media (max-width: 420px) { .practice-btn small { grid-column: 1 / -1; } .practice-btn .badge { top: 14px; transform: none; } }
+.practice-panel {
+  position: absolute; left: 0; right: 0; margin-inline: auto; top: 12px; box-sizing: border-box;
+  width: min(420px, calc(100% - 136px)); display: grid; justify-items: center; gap: 4px; text-align: center;
+  padding: 10px 14px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.practice-panel b { font: 900 20px var(--display); color: var(--cpu); }
+.practice-panel span { font-size: 14px; line-height: 1.35; text-wrap: pretty; }
+.practice-panel .dots { margin-top: 4px; }
+.practice-panel .dots li.now { border-color: var(--cpu); box-shadow: 0 0 6px rgba(47, 198, 180, 0.6); }
+@media (max-width: 520px) { .practice-panel { width: auto; left: 64px; right: 12px; margin: 0; } }

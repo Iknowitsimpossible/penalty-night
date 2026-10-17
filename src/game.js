@@ -16,6 +16,7 @@ import { planShot, reconsider, executeShot } from './ai/taker.js';
 import { keeperPlan, readDive } from './ai/keeper.js';
 import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { explainKick, explainSave } from './feedback/explain.js';
+import { LESSONS, checkLesson } from './practice/lessons.js';
 import { createFeedbackCard } from './ui/feedback-card.js';
 import { createSettingsPanel } from './ui/settings-panel.js';
 import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength, reducedMotion } from './ui/settings.js';
@@ -238,13 +239,20 @@ function startMatch(o) {
   $('hub').hidden = true;
   party = false; post = null; replay = null; rec = null; endReplayLook();
   match.you = []; match.cpu = [];
-  $('menu').hidden = true; $('end').hidden = true; $('hud').hidden = false; $('pauseBtn').hidden = false;
-  showScout(o, 6);
+  const practicing = o.mode === 'practice';
+  $('menu').hidden = true; $('end').hidden = true; $('practiceDone').hidden = true;
+  $('hud').hidden = practicing; $('practice').hidden = !practicing; $('pauseBtn').hidden = false;
+  if (!practicing) showScout(o, 6);
   sfx.whistle();
   nextTurn();
 }
 
 function nextTurn() {
+  if (match.mode === 'practice') {
+    if (practice.step >= LESSONS.length) return finishPractice();
+    renderPractice();
+    return LESSONS[practice.step].role === 'shoot' ? setupYourKick() : setupCpuKick();
+  }
   const w = winner();
   if (w) return endMatch(w);
   renderHud();
@@ -260,6 +268,11 @@ function setupYourKick() {
   keeper = newKeeper(keepers.cpu); keeper.active = true; keeper.maxShift = level.shift;
   taker.root.visible = false; striker.root.visible = false;
   cam.goal = 'shoot';
+  if (match.mode === 'practice') {
+    banner(LESSONS[practice.step].title, `Lesson ${practice.step + 1} of ${LESSONS.length}`, 'info', 1100);
+    hint('');
+    return;
+  }
   const round = match.you.length + 1;
   banner(round <= 5 ? 'Your kick' : 'Sudden death', round <= 5 ? `Kick ${round} of 5` : 'Score and they must answer', 'info', 1100);
   hint(kb.active ? 'Arrows to aim, hold Space for power. Z / X to curl.' : 'Swipe up from the ball. Curve the swipe to bend it.');
@@ -305,9 +318,14 @@ function setupCpuKick() {
   animateRunup(taker, 0);
   startRecording(false);
   cam.goal = 'keeper';
-  banner('Save it', 'Wait for the gold bar, then tap where to dive', 'info', 1100);
-  hint(kb.active ? 'Arrows to aim, Space to dive.' : 'Tap a spot in the goal to dive there.');
-  if (match.cpu.length === 0) showScout(match.opp, 4);
+  if (match.mode === 'practice') {
+    banner(LESSONS[practice.step].title, `Lesson ${practice.step + 1} of ${LESSONS.length}`, 'info', 1100);
+    hint('');
+  } else {
+    banner('Save it', 'Wait for the gold bar, then tap where to dive', 'info', 1100);
+    hint(kb.active ? 'Arrows to aim, Space to dive.' : 'Tap a spot in the goal to dive there.');
+    if (match.cpu.length === 0) showScout(match.opp, 4);
+  }
   renderDiveMeter();
 }
 
@@ -374,8 +392,12 @@ function shoot(kick) {
   startShot();
   shot.intent = kick;
   // The keeper's one decision: a guess at the strike or a read after its reaction time.
-  keeper.pending = keeperPlan(level, match.opp.style, rng);
-  shot.keeper = { kind: keeper.pending.kind, target: null };
+  if (match.mode === 'practice') {
+    shot.keeper = null;               // the keeper stands still in shooting lessons
+  } else {
+    keeper.pending = keeperPlan(level, match.opp.style, rng);
+    shot.keeper = { kind: keeper.pending.kind, target: null };
+  }
   hint('');
 }
 
@@ -436,6 +458,7 @@ function resolve(kind) {
   $('diveMeter').hidden = true;
   const mine = match.turn === 'you';
   const scored = kind === 'goal';
+  if (match.mode === 'practice') return resolvePractice(kind, mine);
   (mine ? match.you : match.cpu).push(scored);
   renderHud();
   const missText = { over: 'Over the bar', wide: 'Wide', post: 'Off the post', short: 'Too soft' }[kind];
@@ -450,6 +473,20 @@ function resolve(kind) {
   }
   startCelebration(kind, mine, scored);
   post.feedback = explainShot(kind, mine);
+}
+
+// Practice: check the lesson, explain, and move on only after a valid attempt.
+function resolvePractice(kind, mine) {
+  const lesson = LESSONS[practice.step];
+  const res = checkLesson(lesson.id, {
+    kind, spot: ballSpot(), intent: shot.intent, dive: match.dive, flight: shot.cpu ? shot.cpu.T : 0.65,
+  });
+  if (res.ok) { banner('Nice!', lesson.title + ' done', 'good'); sfx.roar(false); practice.step++; }
+  else { banner('Try again', lesson.title, 'info', 1200); }
+  startCelebration(kind, mine, kind === 'goal');
+  post.autoReplay = false;
+  const base = explainShot(kind, mine);
+  post.feedback = { ...base, title: res.ok ? `${lesson.title}: done` : 'Try again', advice: res.ok ? lesson.success : res.reason };
 }
 
 // Where the ball ended up for the diagram: stopped by the keeper, off the
@@ -670,7 +707,13 @@ function loadRecord() {
   try { return JSON.parse(storage.getItem('penaltyNight.record')) || { w: 0, l: 0 }; } catch (e) { return { w: 0, l: 0 }; }
 }
 function saveRecord(r) { try { storage.setItem('penaltyNight.record', JSON.stringify(r)); } catch (e) { /* storage unavailable */ } }
+function showPracticeEntry() {
+  const done = practiced();
+  $('practiceBadge').hidden = done;
+  $('practiceNote').textContent = done ? 'Replay the four lessons any time' : 'Learn shooting and keeping · 4 lessons';
+}
 function showRecord() {
+  showPracticeEntry();
   const live = tour && tour.stage !== 'champion' && tour.stage !== 'out';
   $('tourLabel').textContent = live ? 'Continue cup' : 'Night Cup';
   $('tourStatus').textContent = !live ? '8 teams · knockout'
@@ -724,6 +767,7 @@ function cupAfterMatch(gy, gc) {
 }
 function showHub() {
   if (!tour) newCup();
+  resetScenery();
   $('end').hidden = true; $('menu').hidden = true; $('hud').hidden = true; $('hub').hidden = false;
   hint('');
   match.phase = 'menu'; cam.goal = 'menu';
@@ -792,6 +836,39 @@ $('hubMenu').addEventListener('click', () => { $('hub').hidden = true; party = f
 $('hubRestart').addEventListener('click', () => { newCup(); showHub(); });
 $('toMenu').addEventListener('click', () => { $('end').hidden = true; match.phase = 'menu'; party = false; showPicker(); });
 
+// ---------------- practice
+const practice = { step: 0 };
+function practiceOpponent() {
+  // A steady taker who never switches and rarely misses, and a keeper who stands still.
+  return { mode: 'practice', name: 'Coach', code: 'PRA', color: 0x2fc6b4, label: '', style: 'balanced',
+    params: { ...LEVELS.pro, cpuErr: 0.15, reAim: 0, gamble: 0 } };
+}
+function startPractice() { practice.step = 0; startMatch(practiceOpponent()); }
+function renderPractice() {
+  const lesson = LESSONS[practice.step];
+  $('practiceStep').textContent = `Practice · ${practice.step + 1} of ${LESSONS.length}`;
+  $('practiceTitle').textContent = lesson.title;
+  $('practiceHow').textContent = lesson.how[kb.active ? 'keyboard' : 'swipe'];
+  $('practiceDots').replaceChildren(...LESSONS.map((l, i) => {
+    const li = document.createElement('li');
+    li.className = i < practice.step ? 'goal' : i === practice.step ? 'now' : '';
+    return li;
+  }));
+}
+const practiced = () => storage.getItem('penaltyNight.practiced') === '1';
+function finishPractice() {
+  storage.setItem('penaltyNight.practiced', '1');
+  match.phase = 'end';
+  $('practice').hidden = true; $('pauseBtn').hidden = true; $('diveMeter').hidden = true;
+  hint(''); sfx.whistle(); sfx.roar(true);
+  $('practiceDone').hidden = false;
+  $('practicePlay').focus();
+}
+$('practiceBtn').addEventListener('click', () => { initAudio(); startPractice(); });
+$('practicePlay').addEventListener('click', () => { initAudio(); $('practiceDone').hidden = true; startMatch(quickOpponent()); });
+$('practiceAgain').addEventListener('click', () => { $('practiceDone').hidden = true; startPractice(); });
+$('practiceMenu').addEventListener('click', () => { $('practiceDone').hidden = true; match.phase = 'menu'; showPicker(); });
+
 // ---------------- keyboard play
 // Arrows move a target in the goal (the same keys for both roles).
 // Shooting: hold Space to fill the power meter, release to shoot; Z / X curl.
@@ -820,6 +897,7 @@ function updateKeyboard(dt) {
   }
   if (kb.charging) kb.power = Math.min(1, kb.power + dt / 0.9);
   marker.visible = kb.active && (shooting || keeping);
+  if (match.mode === 'practice' && kb.active !== kb.shownAsKeys && practice.step < LESSONS.length) { kb.shownAsKeys = kb.active; renderPractice(); }
   marker.position.set(kb.x, kb.y, keeping ? KEEPER_Z + 0.05 : 0);
   const pm = $('powerMeter');
   pm.hidden = !(kb.active && shooting);
@@ -861,9 +939,10 @@ function pause() {
   if (paused || !inMatch()) return;
   paused = true; swipe = null; kb.charging = false; kb.held.clear();
   audio.suspend();
-  $('pauseTitle').textContent = `${goals(match.you)} – ${goals(match.cpu)}`;
-  $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : 'Paused';
-  const st = match.opp && match.opp.style ? styleOf(match.opp.style) : null;
+  $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : match.mode === 'practice' ? 'Paused · Practice' : 'Paused';
+  $('pauseTitle').textContent = match.mode === 'practice' ? LESSONS[Math.min(practice.step, LESSONS.length - 1)].title : `${goals(match.you)} – ${goals(match.cpu)}`;
+  $('restartBtn').firstChild.textContent = match.mode === 'practice' ? 'Restart practice ' : 'Restart match ';
+  const st = match.opp && match.opp.style && match.mode !== 'practice' ? styleOf(match.opp.style) : null;
   $('pauseScout').textContent = st ? `${st.label}: ${st.scout}` : '';
   $('quitBtn').firstChild.textContent = match.mode === 'cup' ? 'Back to cup ' : 'Quit to menu ';
   $('pause').hidden = false;
@@ -889,6 +968,7 @@ function clearPitch() {
 }
 function restartMatch() {
   const o = match.opp;
+  if (o.mode === 'practice') practice.step = 0;
   resume(); clearPitch();
   startMatch(o);
 }
@@ -896,7 +976,7 @@ function restartMatch() {
 function quitMatch() {
   const cup = match.mode === 'cup';
   resume(); clearPitch();
-  $('hud').hidden = true; $('pauseBtn').hidden = true;
+  $('hud').hidden = true; $('practice').hidden = true; $('pauseBtn').hidden = true;
   match.phase = 'menu';
   if (cup) showHub(); else showPicker();
 }
@@ -958,8 +1038,17 @@ function startIntro() {
   towers.forEach((tw) => { tw.on = reduce ? 1 : 0; });
   cam.goal = 'intro';
 }
+// Menus show an empty pitch: the home keeper waiting on the line, ball on the spot.
+function resetScenery() {
+  hideKeeper(keepers.you); taker.root.visible = false; striker.root.visible = false;
+  keepers.cpu.root.visible = true;
+  keeper = newKeeper(keepers.cpu); keeper.active = true; poseKeeper(keeper);
+  marker.visible = false;
+  placeBall();
+}
 function showPicker() {
   intro = null;
+  resetScenery();
   towers.forEach((tw) => { tw.on = 1; });
   $('menu').hidden = false; $('attract').hidden = true; $('picker').hidden = false;
   if (cam.goal !== 'pick') cam.goal = 'pick';

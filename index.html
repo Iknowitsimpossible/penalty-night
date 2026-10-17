@@ -29,6 +29,13 @@
     <div class="dm-track"><i class="dm-fill"></i></div>
   </div>
 
+  <header class="practice-panel" id="practice" hidden>
+    <p class="eyebrow" id="practiceStep">Practice · 1 of 4</p>
+    <b id="practiceTitle">Low shot</b>
+    <span id="practiceHow"></span>
+    <ol class="dots" id="practiceDots"></ol>
+  </header>
+
   <div id="diveMeter" hidden aria-hidden="true">
     <span class="dm-label" id="diveLabel">Wait</span>
     <div class="dm-track"><i class="dm-fill"></i><b class="dm-commit"></b></div>
@@ -84,6 +91,11 @@
           <span class="go-arrow" aria-hidden="true">›</span>
         </button>
       </div>
+      <button class="practice-btn" id="practiceBtn" type="button">
+        <b>Practice</b>
+        <small id="practiceNote">Learn shooting and keeping · 4 lessons</small>
+        <span class="badge" id="practiceBadge">New? Start here</span>
+      </button>
     </div>
     <p class="corner" id="record"></p>
     <button class="corner-btn" id="settingsBtn" type="button" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg></button>
@@ -117,6 +129,19 @@
         <button class="ghost" id="hubMenu" type="button">Main menu</button>
       </div>
       <button class="ghost" id="hubRestart" type="button">Start a new cup</button>
+    </div>
+  </section>
+
+  <section class="overlay" id="practiceDone" hidden>
+    <div class="card">
+      <p class="eyebrow">Practice complete</p>
+      <h1>You're ready</h1>
+      <p class="lede">Low, high and curved shots, and a keeper who waits for the plant foot. Every kick after this gets a short card telling you what to change.</p>
+      <button class="go" id="practicePlay" type="button">Play a quick match</button>
+      <div class="row">
+        <button class="ghost" id="practiceAgain" type="button">Practice again</button>
+        <button class="ghost" id="practiceMenu" type="button">Main menu</button>
+      </div>
     </div>
   </section>
 
