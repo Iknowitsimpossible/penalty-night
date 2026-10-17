@@ -202,7 +202,7 @@ function setupYourKick() {
   hud.diveMeter(null);
   placeBall();
   hideKeeper(keepers.you); keepers.cpu.root.visible = true;
-  keeper = withLanding(newKeeper(keepers.cpu)); keeper.active = true; keeper.maxShift = level.shift;
+  keeper = withLanding(newKeeper(keepers.cpu, keeper)); keeper.active = true; keeper.maxShift = level.shift;
   taker.root.visible = false; striker.root.visible = false;
   cam.goal = 'shoot';
   if (match.mode === 'practice') {
@@ -233,7 +233,7 @@ function setupCpuKick() {
   keys.reset(1.0);
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
-  keeper = withLanding(newKeeper(keepers.you)); keeper.active = true; keeper.maxShift = 1.85;
+  keeper = withLanding(newKeeper(keepers.you, keeper)); keeper.active = true; keeper.maxShift = 1.85;
   taker.root.visible = true; striker.root.visible = false;
   animateRunup(taker, 0);
   startRecording(false);

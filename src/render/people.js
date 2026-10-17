@@ -54,8 +54,21 @@ export function animateRunup(b, timer) {
 }
 
 // Keeper state: feet position, body tilt (radians, + leans to +x), arm raise 0..1.
-export function newKeeper(body) {
-  return { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8, homeX: 0 };
+// prev: the keeper this one replaces. When it is the same body, still on
+// screen (a new kick in training or practice), the game state starts fresh
+// at once, but the body is drawn easing from where it was for BLEND seconds,
+// so it does not jump back to the centre in one frame.
+export const BLEND = 0.35;
+export function newKeeper(body, prev = null) {
+  const k = { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8, homeX: 0, blend: null };
+  if (prev && prev.body === body) {
+    const r = body.root;
+    k.blend = {
+      t: 0, pos: r.position.clone(), rotZ: r.rotation.z,
+      shoulders: body.shoulders.map((sh) => sh.rotation.z), hips: body.hips.map((h) => h.rotation.z),
+    };
+  }
+  return k;
 }
 const READY = 2.35;           // shoulder angle with arms out and down
 const REACHING = 0.08;        // arms almost parallel, both hands toward the ball
@@ -106,15 +119,30 @@ export function lowestPoint(root) {
 // The dive tilts the body around the feet, which would push the lower leg
 // (and, landing, a glove) into the grass. Lift the keeper just enough that
 // nothing goes below the ground, the way a real keeper's feet leave it.
-function keepOnGrass(k) {
-  const root = k.body.root;
+function liftAboveGrass(root) {
   root.updateMatrixWorld(true);
   const low = lowestPoint(root);
   if (low < 0) {
-    k.y -= low;
-    root.position.y = k.y;
+    root.position.y -= low;
     root.updateMatrixWorld(true);
   }
+}
+function keepOnGrass(k) {
+  liftAboveGrass(k.body.root);
+  k.y = k.body.root.position.y;
+}
+// Draw the body part way between its old pose and the one just set from
+// the game state (which is left alone). Smoothstep, like the dive.
+function drawBlend(k, dt) {
+  const b = k.blend, body = k.body, root = body.root;
+  b.t += dt;
+  const e = smoothstep(Math.min(b.t / BLEND, 1));
+  root.position.lerpVectors(b.pos, root.position, e);
+  root.rotation.z = lerp(b.rotZ, root.rotation.z, e);
+  body.shoulders.forEach((sh, i) => { sh.rotation.z = lerp(b.shoulders[i], sh.rotation.z, e); });
+  body.hips.forEach((h, i) => { h.rotation.z = lerp(b.hips[i], h.rotation.z, e); });
+  liftAboveGrass(root);
+  if (b.t >= BLEND) k.blend = null;
 }
 export function hideKeeper(body) { body.root.visible = false; }
 
@@ -192,6 +220,7 @@ export function updateKeeper(k, dt, time) {
     }
   }
   poseKeeper(k);
+  if (k.blend) drawBlend(k, dt);
 }
 // Spheres that stand in for the keeper for collisions: five along the body,
 // the two gloves (indices 5 and 6), one between the hands, and one on each

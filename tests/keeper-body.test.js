@@ -72,4 +72,35 @@ describe('keeper body', () => {
       expect(maxJump).toBeLessThan(0.03);
     }
   });
+
+  it('a new kick eases the same body back to the centre instead of jumping', () => {
+    // Lying on the grass after a long dive (before getting up), as when a
+    // training shot ends early and the next one starts.
+    const old = newKeeper(body);
+    old.active = true;
+    planDive(old, 3.2, 0.3);
+    for (let t = 0; t < 1.4; t += H) updateKeeper(old, H, t);
+    const k = newKeeper(body, old);
+    k.active = true;
+    expect(k.x).toBe(0);   // the game state resets at once
+    const at = body.root.position.clone();
+    let maxMove = 0, worst = Infinity, t = 0;
+    for (; t < 0.4; t += H) {   // a little longer than BLEND
+      updateKeeper(k, H, t);
+      maxMove = Math.max(maxMove, body.root.position.distanceTo(at));
+      at.copy(body.root.position);
+      worst = Math.min(worst, lowestVertex(body.root));
+    }
+    expect(maxMove).toBeLessThan(0.05);         // no jump between steps
+    expect(worst).toBeGreaterThanOrEqual(-0.01);
+    expect(k.blend).toBe(null);
+    expect(Math.abs(body.root.rotation.z)).toBeLessThan(1e-9);   // standing
+    expect(Math.abs(body.root.position.x - k.x)).toBeLessThan(1e-9);
+  });
+
+  it('a different body (the other keeper) starts with no blend', () => {
+    const other = makePerson(new THREE.Scene(), KITS.youKeeper);
+    const old = newKeeper(other);
+    expect(newKeeper(body, old).blend).toBe(null);
+  });
 });
