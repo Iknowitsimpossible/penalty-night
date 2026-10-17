@@ -1,20 +1,17 @@
 import * as THREE from 'three';
-import { shootoutWinner } from './rules.js';
 import { shotFromSwipe } from './shot.js';
+import { HALF, GOAL_H, POST_R, R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, KEEPER_Z, REACH, RUNUP, netDepth } from './core/constants.js';
+import { clamp, lerp } from './core/math.js';
+import { createRng } from './core/random.js';
+import { launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
+import { shootoutWinner, goals } from './rules/shootout.js';
+import { TEAMS, YOU, createCup, recordResult, standings, currentFixture, goalDifference, teamName } from './tournament/cup.js';
 
 export function startGame() {
 const $ = (id) => document.getElementById(id);
 
-// ------------------------------------------------------------------
-// Real-world units: metres and seconds. x = right, y = up, z = toward
-// the penalty taker. The goal line is z = 0, the spot is z = 11.
-// ------------------------------------------------------------------
-const HALF = 3.66, GOAL_H = 2.44, POST_R = 0.06, R = 0.11;
-const PX = HALF + POST_R, BAR_Y = GOAL_H + POST_R;
-const SPOT_Z = 11, G = -9.81, MAGNUS = 0.022;
-const NET_D0 = 2.0, NET_D1 = 1.0;          // net depth at the ground / at the roof
-const KEEPER_Z = 0.35;
-const REACH = 2.09;                          // feet to gloves with arms up
+// Gameplay randomness is seedable (see core/random.js); visual randomness is not.
+const rng = createRng();
 
 const LEVELS = {
   amateur: { note: 'Slow keeper who guesses a lot. Their takers miss often.',
@@ -56,8 +53,6 @@ function canvasTexture(w, h, draw) {
   return t;
 }
 const rand = (a, b) => a + Math.random() * (b - a);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const lerp = (a, b, t) => a + (b - a) * t;
 const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
 
 // ------------------------------------------------------------------ sky
@@ -149,7 +144,6 @@ bar(V(-PX, GOAL_H, -NET_D1), V(PX, GOAL_H, -NET_D1), 0.025, support);
 
 // ------------------------------------------------------------------ net
 // Every knot of the net is a grid vertex; a goal pushes a bulge into it.
-const netDepth = (y) => NET_D0 - (NET_D0 - NET_D1) * (y / GOAL_H);
 const net = { base: [], segs: [], bulges: [] };
 function netGrid(nu, nv, fn) {
   const start = net.base.length;
@@ -463,9 +457,8 @@ const taker = makePerson(KITS.cpuTaker);
 const striker = makePerson(KITS.youTaker);   // you: only seen in replays and celebrations
 striker.root.visible = false;
 
-// Run-up shared by the CPU taker and by your striker in replays: 1.05 s from
+// Run-up shared by the CPU taker and by your striker in replays: RUNUP s from
 // the edge of the D to the ball, then the kicking leg swings through.
-const RUNUP = 1.05;
 function animateRunup(b, timer) {
   const p = Math.min(timer / RUNUP, 1);
   b.root.position.set(lerp(-1.8, -0.42, p), 0, lerp(13.6, 11.45, p));
@@ -588,34 +581,10 @@ function placeBall() {
   ball.mesh.position.copy(ball.pos);
 }
 
-// Solve the kick so the ball reaches target after T seconds, including
-// the sideways push of its spin, so a curled shot still finds its target.
 function launch(target, T, spin) {
-  const d = new THREE.Vector3().subVectors(target, ball.pos);
-  const ax = MAGNUS * spin * (d.z / T);
-  ball.vel.set((d.x - 0.5 * ax * T * T) / T, (d.y - 0.5 * G * T * T) / T, d.z / T);
+  launchVelocity(ball.pos, target, T, spin, ball.vel);
   ball.spin = spin;
   ball.moving = true;
-}
-
-// One physics step for any ball-like state (also used by the keeper to predict).
-function stepBall(b, h) {
-  b.vel.y += G * h;
-  b.vel.x += MAGNUS * b.spin * b.vel.z * h;
-  b.vel.z += -MAGNUS * b.spin * b.vel.x * h;
-  b.pos.addScaledVector(b.vel, h);
-  b.spin *= 1 - 0.12 * h;
-  if (b.pos.y < R) {
-    b.pos.y = R;
-    if (b.vel.y < 0) b.vel.y = -b.vel.y * 0.5;
-    if (b.vel.y < 0.35) b.vel.y = 0;
-    b.vel.x *= 1 - 0.6 * h; b.vel.z *= 1 - 0.6 * h; b.spin *= 1 - 2 * h;
-  }
-}
-function predictCrossing(readSpin) {
-  const b = { pos: ball.pos.clone(), vel: ball.vel.clone(), spin: ball.spin * readSpin };
-  for (let i = 0; i < 400 && b.pos.z > KEEPER_Z; i++) stepBall(b, 1 / 120);
-  return b.pos;
 }
 
 // ------------------------------------------------------------------ collisions
@@ -640,8 +609,8 @@ function collide(h) {
   if (keeper.active && shot && shot.cool <= 0 && p.z < 1.6 && p.z > -0.4) {
     for (const s of keeperSpheres(keeper)) {
       if (bounceOff(s.c, s.r, 0.3)) {
-        ball.vel.z = Math.max(ball.vel.z, rand(1.5, 4));
-        ball.vel.x += rand(-1.5, 1.5);
+        ball.vel.z = Math.max(ball.vel.z, rng.range(1.5, 4));
+        ball.vel.x += rng.range(-1.5, 1.5);
         ball.spin *= 0.2;
         shot.touched = true; shot.cool = 0.1;
         sfx.save();
@@ -749,7 +718,7 @@ function renderHud() {
   };
   fillDots($('dotsYou'), match.you);
   fillDots($('dotsCpu'), match.cpu);
-  $('scoreLine').textContent = `${match.you.filter(Boolean).length} – ${match.cpu.filter(Boolean).length}`;
+  $('scoreLine').textContent = `${goals(match.you)} – ${goals(match.cpu)}`;
   const round = match.you.length === match.cpu.length ? match.you.length + 1 : match.you.length;
   $('round').textContent = (match.stageLabel ? match.stageLabel + ' · ' : '') + (round <= 5 ? `Round ${round} of 5` : `Sudden death · kick ${round - 5}`);
 }
@@ -874,8 +843,8 @@ function takeKick(pts) {
   sfx.kick(clamp(1.1 - T, 0, 1));
   startShot();
   // the keeper's move: either a gamble at the moment of the kick or a read after his reaction time
-  if (Math.random() < level.gamble) {
-    keeper.pending = { at: 0.04, x: Math.sign(Math.random() - 0.5) * rand(1.6, 3.2), y: rand(0.3, 1.9) };
+  if (rng.chance(level.gamble)) {
+    keeper.pending = { at: 0.04, x: rng.sign() * rng.range(1.6, 3.2), y: rng.range(0.3, 1.9) };
   } else keeper.pending = { at: level.react, read: true };
   hint('');
 }
@@ -901,14 +870,14 @@ function playerDive(e) {
 }
 
 function cpuShoot() {
-  let side = Math.random() < 0.5 ? -1 : 1;
-  if (match.early && keeper.dive && Math.random() < level.reAim) side = -Math.sign(keeper.dive.toX || 1);
+  let side = rng.sign();
+  if (match.early && keeper.dive && rng.chance(level.reAim)) side = -Math.sign(keeper.dive.toX || 1);
   let tx, ty;
-  if (Math.random() < 0.12) { tx = rand(-0.6, 0.6); ty = rand(1.3, 2.1); }
-  else { tx = side * rand(1.4, 3.45); ty = rand(0.15, 2.15); }
-  tx += gauss() * level.cpuErr; ty += gauss() * level.cpuErr * 0.8;
-  const T = rand(0.55, 0.8);
-  launch(new THREE.Vector3(tx, Math.max(R, ty), 0), T, rand(-10, 10));
+  if (rng.chance(0.12)) { tx = rng.range(-0.6, 0.6); ty = rng.range(1.3, 2.1); }
+  else { tx = side * rng.range(1.4, 3.45); ty = rng.range(0.15, 2.15); }
+  tx += rng.gauss() * level.cpuErr; ty += rng.gauss() * level.cpuErr * 0.8;
+  const T = rng.range(0.55, 0.8);
+  launch(new THREE.Vector3(tx, Math.max(R, ty), 0), T, rng.range(-10, 10));
   sfx.kick(0.7);
   startShot();
 }
@@ -1096,7 +1065,7 @@ function endReplayLook() {
 
 function endMatch(w) {
   match.phase = 'end';
-  const gy = match.you.filter(Boolean).length, gc = match.cpu.filter(Boolean).length;
+  const gy = goals(match.you), gc = goals(match.cpu);
   const sd = match.you.length > 5;
   $('endEyebrow').textContent = sd ? 'Decided in sudden death' : 'Full time';
   $('endTitle').textContent = w === 'you' ? 'You win' : (match.mode === 'cup' ? `${match.opp.name} win` : 'They win');
@@ -1133,22 +1102,8 @@ function showRecord() {
 }
 
 // ------------------------------------------------------------------ the Night Cup
-// Eight teams, two groups of four, every match a shootout. Three points for
-// a win; ties in the table go to goal difference, then goals scored.
-// The top two of each group meet in the semifinals: A1 v B2 and B1 v A2.
-const CUP = [
-  { name: 'You', code: 'YOU', color: 0xf2c230, rating: 0.5 },
-  { name: 'Lakeside Athletic', code: 'LAK', color: 0x3b82f6, rating: 0.2 },
-  { name: 'Northgate Rovers', code: 'NOR', color: 0xd94a4a, rating: 0.32 },
-  { name: 'Harbor City', code: 'HAR', color: 0x2fc6b4, rating: 0.44 },
-  { name: 'Ironvale', code: 'IRV', color: 0x9aa3b5, rating: 0.55 },
-  { name: 'Redwood United', code: 'RED', color: 0xe07b39, rating: 0.64 },
-  { name: 'Port Azure', code: 'AZU', color: 0x8b6cff, rating: 0.78 },
-  { name: 'Kingsbridge', code: 'KIN', color: 0xf0f0f0, rating: 0.92 },
-];
-// Matchday pairings inside a group of four (positions 0-3). You are always
-// position 0, and your group is drawn weakest first, so the cup gets harder.
-const DAYS = [[[0, 1], [2, 3]], [[0, 2], [1, 3]], [[0, 3], [1, 2]]];
+// Rules and progression live in tournament/cup.js. This part saves the cup,
+// turns a team's rating into keeper and taker skill, and draws the hub.
 const LEVEL_KEYS = ['react', 'err', 'shift', 'gamble', 'readSpin', 'cpuErr', 'reAim'];
 function paramsFor(r) {
   const [a, b, t] = r < 0.5 ? [LEVELS.amateur, LEVELS.pro, r / 0.5] : [LEVELS.pro, LEVELS.legend, (r - 0.5) / 0.5];
@@ -1157,109 +1112,33 @@ function paramsFor(r) {
   return o;
 }
 let tour = loadCup();
-function loadCup() { try { return JSON.parse(localStorage.getItem('penaltyNight.cup')); } catch (e) { return null; } }
+function loadCup() {
+  try {
+    const t = JSON.parse(localStorage.getItem('penaltyNight.cup'));
+    return t && t.table && t.A && t.B ? t : null;
+  } catch (e) { return null; }
+}
 function saveCup() { try { localStorage.setItem('penaltyNight.cup', JSON.stringify(tour)); } catch (e) { /* storage unavailable */ } }
 function newCup() {
-  const take = (arr) => arr.splice((Math.random() * arr.length) | 0, 1)[0];
-  const top = [6, 7], upper = [4, 5], lower = [2, 3];
-  const A = [0, take(lower), take(upper), take(top)];
-  const B = [1, lower[0], upper[0], top[0]];
-  const table = {};
-  for (let i = 0; i < CUP.length; i++) table[i] = { p: 0, w: 0, l: 0, gf: 0, ga: 0, pts: 0 };
-  tour = { A, B, table, day: 0, stage: 'group', semis: null, final: null, ko: [], news: 'Eight teams, two groups. Win your group games and the top two go through to the semifinals.' };
+  tour = createCup(rng);
   saveCup();
   party = false;
 }
-// A shootout between two computer teams: the better side scores more often.
-function simShootout(a, b) {
-  const ra = CUP[a].rating, rb = CUP[b].rating;
-  const pa = clamp(0.74 + 0.22 * (ra - rb), 0.5, 0.93), pb = clamp(0.74 + 0.22 * (rb - ra), 0.5, 0.93);
-  let ga = 0, gb = 0;
-  for (let i = 0; i < 5; i++) { ga += Math.random() < pa; gb += Math.random() < pb; }
-  while (ga === gb) { ga += Math.random() < pa; gb += Math.random() < pb; }
-  return [ga, gb];
-}
-function addGroupResult(a, b, ga, gb) {
-  const ta = tour.table[a], tb = tour.table[b];
-  ta.p++; tb.p++; ta.gf += ga; ta.ga += gb; tb.gf += gb; tb.ga += ga;
-  if (ga > gb) { ta.w++; tb.l++; ta.pts += 3; } else { tb.w++; ta.l++; tb.pts += 3; }
-}
-function standings(group) {
-  return group.slice().sort((x, y) => {
-    const a = tour.table[x], b = tour.table[y];
-    return (b.pts - a.pts) || ((b.gf - b.ga) - (a.gf - a.ga)) || (b.gf - a.gf) || (CUP[y].rating - CUP[x].rating);
-  });
-}
-function cupFixture() {
-  if (tour.stage === 'group') return { opp: tour.A[DAYS[tour.day][0][1]], label: `Group A · Matchday ${tour.day + 1}` };
-  if (tour.stage === 'semi') { const tie = tour.semis.find((t) => t.includes(0)); return { opp: tie[0] === 0 ? tie[1] : tie[0], label: 'Semifinal' }; }
-  if (tour.stage === 'final') return { opp: tour.final[0] === 0 ? tour.final[1] : tour.final[0], label: 'Final' };
-  return null;
-}
 function playCupMatch() {
-  const fx = cupFixture();
+  const fx = currentFixture(tour);
   if (!fx) return;
-  const t = CUP[fx.opp];
+  const t = TEAMS[fx.opp];
   startMatch({ mode: 'cup', name: t.name, code: t.code, color: t.color, params: paramsFor(t.rating), label: fx.label });
 }
-const nm = (i) => CUP[i].name;
-// Records your result, plays the other matches of the round, and moves the cup on.
-// Returns one line for the end-of-match screen.
+const nm = teamName;
+// Records your result and moves the cup on. Returns one line for the end screen.
 function cupAfterMatch(gy, gc) {
-  const fx = cupFixture();
-  const opp = fx.opp, won = gy > gc;
-  const others = [];
-  if (tour.stage === 'group') {
-    addGroupResult(0, opp, gy, gc);
-    const [c, d] = DAYS[tour.day][1].map((k) => tour.A[k]);
-    const [gcA, gdA] = simShootout(c, d); addGroupResult(c, d, gcA, gdA); others.push(`${nm(c)} ${gcA}–${gdA} ${nm(d)}`);
-    for (const [x, y] of DAYS[tour.day].map((pr) => pr.map((k) => tour.B[k]))) {
-      const [gx, gyB] = simShootout(x, y); addGroupResult(x, y, gx, gyB); others.push(`${nm(x)} ${gx}–${gyB} ${nm(y)}`);
-    }
-    tour.day++;
-    if (tour.day === 3) {
-      const a = standings(tour.A), b = standings(tour.B);
-      tour.semis = [[a[0], b[1]], [b[0], a[1]]];
-      tour.stage = a.slice(0, 2).includes(0) ? 'semi' : 'out';
-      tour.news = tour.stage === 'semi'
-        ? `Through to the semifinals as group ${a[0] === 0 ? 'winners' : 'runners-up'}. Elsewhere: ${others.join(', ')}.`
-        : `Out in the group stage, finishing ${['first', 'second', 'third', 'fourth'][a.indexOf(0)]}. Elsewhere: ${others.join(', ')}.`;
-      if (tour.stage === 'out') finishCupForOthers();
-    } else {
-      tour.news = `${won ? 'Three points.' : 'A defeat, but the group is still open.'} Elsewhere: ${others.join(', ')}.`;
-    }
-  } else if (tour.stage === 'semi') {
-    tour.ko.push({ round: 'Semifinal', a: 0, b: opp, ga: gy, gb: gc });
-    const other = tour.semis.find((t) => !t.includes(0));
-    const [g1, g2] = simShootout(other[0], other[1]);
-    tour.ko.push({ round: 'Semifinal', a: other[0], b: other[1], ga: g1, gb: g2 });
-    const otherWinner = g1 > g2 ? other[0] : other[1];
-    if (won) { tour.final = [0, otherWinner]; tour.stage = 'final'; tour.news = `Into the final! ${nm(otherWinner)} are waiting after beating ${nm(g1 > g2 ? other[1] : other[0])} ${Math.max(g1, g2)}–${Math.min(g1, g2)}.`; }
-    else { tour.stage = 'out'; tour.news = `Knocked out in the semifinal by ${nm(opp)}.`; finishCupForOthers(opp, otherWinner); }
-  } else if (tour.stage === 'final') {
-    tour.ko.push({ round: 'Final', a: 0, b: opp, ga: gy, gb: gc });
-    tour.stage = won ? 'champion' : 'out';
-    tour.news = won ? 'Champions of the Night Cup.' : `Beaten in the final by ${nm(opp)}. So close.`;
-    if (won) { try { localStorage.setItem('penaltyNight.cups', String((+localStorage.getItem('penaltyNight.cups') || 0) + 1)); } catch (e) { /* storage unavailable */ } }
+  const line = recordResult(tour, gy, gc, rng);
+  if (tour.stage === 'champion') {
+    try { localStorage.setItem('penaltyNight.cups', String((+localStorage.getItem('penaltyNight.cups') || 0) + 1)); } catch (e) { /* storage unavailable */ }
   }
   saveCup();
-  if (tour.stage === 'champion') return 'You won the Night Cup!';
-  if (tour.stage === 'out' || tour.stage === 'final') return tour.news;
-  return won ? 'On to the next one. Continue to see the table.' : 'Continue to see where that leaves you.';
-}
-// Once you are out, the rest of the cup is played so the hub can show a champion.
-function finishCupForOthers(semiWinnerA, semiWinnerB) {
-  let w1 = semiWinnerA, w2 = semiWinnerB;
-  if (w1 === undefined) {
-    const [s1, s2] = tour.semis;
-    const [a1, b1] = simShootout(s1[0], s1[1]); tour.ko.push({ round: 'Semifinal', a: s1[0], b: s1[1], ga: a1, gb: b1 });
-    const [a2, b2] = simShootout(s2[0], s2[1]); tour.ko.push({ round: 'Semifinal', a: s2[0], b: s2[1], ga: a2, gb: b2 });
-    w1 = a1 > b1 ? s1[0] : s1[1]; w2 = a2 > b2 ? s2[0] : s2[1];
-  }
-  const [f1, f2] = simShootout(w1, w2);
-  tour.ko.push({ round: 'Final', a: w1, b: w2, ga: f1, gb: f2 });
-  tour.final = [w1, w2];
-  tour.news += ` ${nm(f1 > f2 ? w1 : w2)} won the cup.`;
+  return line;
 }
 function showHub() {
   if (!tour) newCup();
@@ -1268,26 +1147,26 @@ function showHub() {
   match.phase = 'menu'; camGoal = 'menu';
   party = tour.stage === 'champion';
   if (party) flashRate = 30;
-  const sw = (i) => `<span class="sw" style="background:#${new THREE.Color(CUP[i].color).getHexString()}"></span>`;
+  const sw = (i) => `<span class="sw" style="background:#${new THREE.Color(TEAMS[i].color).getHexString()}"></span>`;
   const stageName = { group: 'Group stage', semi: 'Semifinals', final: 'Final', champion: 'Champions', out: 'Knocked out' }[tour.stage];
   $('hubEyebrow').textContent = `The Night Cup · ${stageName}`;
   $('hubTitle').textContent = tour.stage === 'group' ? `Matchday ${tour.day + 1} of 3`
     : tour.stage === 'semi' ? 'Semifinal' : tour.stage === 'final' ? 'The Final'
     : tour.stage === 'champion' ? 'Champions!' : 'Knocked out';
   $('hubNews').textContent = tour.news;
-  const fx = cupFixture();
+  const fx = currentFixture(tour);
   $('hubFixture').hidden = !fx;
   if (fx) {
-    const r = CUP[fx.opp].rating, stars = Math.max(1, Math.round(r * 5));
+    const r = TEAMS[fx.opp].rating, stars = Math.max(1, Math.round(r * 5));
     $('hubFixture').innerHTML = `<div class="who"><small>${fx.label} · next match</small>${sw(fx.opp)}${nm(fx.opp)}</div>
       <div class="stars">Keeper <b>${'●'.repeat(stars)}${'○'.repeat(5 - stars)}</b></div>`;
   }
   const table = (title, group) => {
-    const order = standings(group);
+    const order = standings(tour, group);
     const rows = order.map((i, k) => {
       const t = tour.table[i];
-      const gd = t.gf - t.ga;
-      return `<tr class="${k < 2 ? 'through' : ''} ${i === 0 ? 'me' : ''}"><td>${sw(i)}${CUP[i].code}</td><td>${t.p}</td><td>${t.w}</td><td>${t.l}</td><td>${gd > 0 ? '+' + gd : gd}</td><td>${t.pts}</td></tr>`;
+      const gd = goalDifference(t);
+      return `<tr class="${k < 2 ? 'through' : ''} ${i === YOU ? 'me' : ''}"><td>${sw(i)}${TEAMS[i].code}</td><td>${t.p}</td><td>${t.w}</td><td>${t.l}</td><td>${gd > 0 ? '+' + gd : gd}</td><td>${t.pts}</td></tr>`;
     }).join('');
     return `<div><table class="cup-table"><caption>${title}</caption><thead><tr><th>Team</th><th>P</th><th>W</th><th>L</th><th>GD</th><th>Pts</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   };
@@ -1444,8 +1323,8 @@ function frame(now) {
     if (keeper.pending.at <= 0) {
       const pd = keeper.pending; keeper.pending = null;
       if (pd.read) {
-        const c = predictCrossing(level.readSpin);
-        planDive(keeper, c.x + gauss() * level.err, clamp(c.y + gauss() * level.err * 0.6, 0, 2.8));
+        const c = predictCrossing(ball, level.readSpin);
+        planDive(keeper, c.x + rng.gauss() * level.err, clamp(c.y + rng.gauss() * level.err * 0.6, 0, 2.8));
       } else planDive(keeper, pd.x, pd.y);
     }
   }
