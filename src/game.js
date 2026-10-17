@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { shotFromSwipe } from './shot.js';
+import { readSwipe } from './input/swipe.js';
 import { HALF, GOAL_H, POST_R, R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, KEEPER_Z, REACH, RUNUP, netDepth } from './core/constants.js';
 import { clamp, lerp } from './core/math.js';
 import { createRng } from './core/random.js';
@@ -816,7 +816,6 @@ canvas.addEventListener('pointerdown', (e) => {
   initAudio();
   if (trySkip()) return;
   if (match.phase === 'aim') {
-    if (!coached) { coached = true; $('coach').hidden = true; try { localStorage.setItem('penaltyNight.coached', '1'); } catch (err) { /* storage unavailable */ } }
     const p = stagePoint(e);
     if (p.y < stage.clientHeight * 0.3) return;
     swipe = [p]; trailFade = 1;
@@ -834,14 +833,30 @@ canvas.addEventListener('pointerup', (e) => {
 });
 canvas.addEventListener('pointercancel', () => { swipe = null; });
 
+const SWIPE_HINTS = {
+  tap: 'Swipe up from the ball to shoot.',
+  short: 'Swipe further up toward the goal.',
+  down: 'Swipe up, toward the goal.',
+};
 function takeKick(pts) {
-  const kick = shotFromSwipe(pts, stage.clientHeight);
-  if (!kick) { hint('Swipe further up toward the goal.'); return; }
+  const { kick, reason } = readSwipe(pts, stage.clientWidth, stage.clientHeight);
+  if (!kick) { hint(SWIPE_HINTS[reason]); return; }
+  shoot(kick);
+}
+// The coach stays until the first kick that actually counts.
+function markCoached() {
+  if (coached) return;
+  coached = true; $('coach').hidden = true;
+  try { localStorage.setItem('penaltyNight.coached', '1'); } catch (err) { /* storage unavailable */ }
+}
+function shoot(kick) {
+  markCoached();
   const { aimX, aimY, T, spin } = kick;
   startRecording(true);
   launch(new THREE.Vector3(aimX, aimY, 0), T, spin);
-  sfx.kick(clamp(1.1 - T, 0, 1));
+  sfx.kick(kick.power);
   startShot();
+  shot.intent = kick;
   // the keeper's move: either a gamble at the moment of the kick or a read after his reaction time
   if (rng.chance(level.gamble)) {
     keeper.pending = { at: 0.04, x: rng.sign() * rng.range(1.6, 3.2), y: rng.range(0.3, 1.9) };
