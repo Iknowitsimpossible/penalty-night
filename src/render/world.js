@@ -96,7 +96,7 @@ export function createWorld(canvas) {
   scene.add(surround);
 
   // ------------------------------------------------------------------ goal frame
-  const white = new THREE.MeshStandardMaterial({ color: 0xf4f6f8, roughness: 0.35, metalness: 0.1 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xf4f6f8, roughness: 0.35, metalness: 0.1, transparent: true });
   function bar(a, b, r, mat) {
     const dir = new THREE.Vector3().subVectors(b, a);
     const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, dir.length(), 14), mat);
@@ -109,7 +109,7 @@ export function createWorld(canvas) {
   bar(V(-PX, 0, 0), V(-PX, BAR_Y + POST_R, 0), POST_R, white);
   bar(V(PX, 0, 0), V(PX, BAR_Y + POST_R, 0), POST_R, white);
   bar(V(-PX - POST_R, BAR_Y, 0), V(PX + POST_R, BAR_Y, 0), POST_R, white);
-  const support = new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.5 });
+  const support = new THREE.MeshStandardMaterial({ color: 0xc9ced6, roughness: 0.5, transparent: true });
   for (const s of [-1, 1]) {
     bar(V(s * PX, BAR_Y, 0), V(s * PX, GOAL_H, -NET_D1), 0.025, support);
     bar(V(s * PX, GOAL_H, -NET_D1), V(s * PX, 0.02, -NET_D0), 0.025, support);
@@ -144,8 +144,9 @@ export function createWorld(canvas) {
     net.geo.attributes.position.needsUpdate = true;
   }
   writeNet();
+  const netMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
   scene.add(new THREE.LineSegments(net.geo,
-    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 })));
+    netMat));
   function bulgeNet(at, dir, strength) {
     net.bulges.push({ at: at.clone(), dir: dir.clone().normalize(), a: strength, t: 0 });
   }
@@ -183,7 +184,7 @@ export function createWorld(canvas) {
     boardTex.repeat.set(2, 1);
     boardMat.map = boardTex; boardMat.emissiveMap = boardTex; boardMat.needsUpdate = true;
   }
-  const boardMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.6 });
+  const boardMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.55, roughness: 0.6, transparent: true });
   const board = new THREE.Mesh(new THREE.BoxGeometry(40, 0.9, 0.12), boardMat);
   board.position.set(0, 0.45, -4.6);
   scene.add(board);
@@ -276,7 +277,19 @@ export function createWorld(canvas) {
     boardMat.emissiveIntensity = 0.12 + 0.43 * f;
   }
 
+  // When you keep goal the camera looks out from behind the net, so the
+  // net, its support bars and the ad board fade to keep the taker and the
+  // ball clear. f: 0 = normal, 1 = fully faded.
+  function setGoalFade(f) {
+    netMat.opacity = 0.5 - 0.38 * f;
+    support.opacity = 1 - 0.8 * f;
+    boardMat.opacity = 1 - 0.75 * f;
+    white.opacity = 1 - 0.65 * f;      // posts and crossbar stay faintly visible
+    support.depthWrite = boardMat.depthWrite = white.depthWrite = f < 0.05;
+  }
+
   return {
+    setGoalFade,
     renderer, scene, camera, canvasTexture, glowTex, maxAniso,
     net, bulgeNet, updateNet,
     boardMat, drawBoard, getBoardTex: () => boardTex,

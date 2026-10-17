@@ -126,6 +126,8 @@ h1.mid { font-size: clamp(30px, 6.5vw, 48px); }
 .fixture .who small { display: block; font: 500 11px var(--mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
 .fixture .stars { font-family: var(--mono); font-size: 13px; color: var(--muted); }
 .fixture .stars b { color: var(--flood); font-weight: 500; letter-spacing: 0.1em; }
+.fixture .scouting { flex-basis: 100%; margin: 0; font-size: 14px; line-height: 1.4; color: var(--muted); }
+.fixture .scouting b { color: var(--ink); font-weight: 600; }
 @media (max-width: 560px) { .tables { grid-template-columns: 1fr; } }
 .ghost { font: 600 14px var(--body); color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 10px; cursor: pointer; }
 .record { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: center; }
@@ -207,3 +209,38 @@ button:focus-visible { outline: 2px solid var(--flood); outline-offset: 2px; }
   .tag { font-size: 15px; } .score { font-size: 22px; } .dots li { width: 9px; height: 9px; } .hud { gap: 3px 10px; padding: 7px 10px; }
 }
 @media (prefers-reduced-motion: reduce) { #banner.show { animation: none; } #replayTag i { animation: none; } .bar { transition: none; } }
+
+/* Dive timing: red while the taker can still switch, gold from the plant foot. */
+#diveMeter {
+  --fill: 0; --commit: 0.69;
+  position: absolute; left: 50%; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  width: min(360px, calc(100% - 32px)); display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px;
+  padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; pointer-events: none;
+}
+.dm-label { font: 700 12px var(--mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--bad); min-width: 8ch; }
+#diveMeter.locked .dm-label { color: var(--you); }
+#diveMeter.dived .dm-label { color: var(--ink); }
+#diveMeter.early .dm-label { color: var(--bad); }
+.dm-track {
+  position: relative; height: 8px; border-radius: 4px; overflow: hidden;
+  background: linear-gradient(90deg, rgba(239, 90, 95, 0.28) 0 calc(var(--commit) * 100%), rgba(242, 194, 48, 0.28) 0);
+}
+.dm-fill {
+  position: absolute; inset: 0 auto 0 0; width: calc(var(--fill) * 100%);
+  background: linear-gradient(90deg, var(--bad) 0 calc(var(--commit) / max(var(--fill), 0.001) * 100%), var(--you) 0);
+}
+.dm-commit { position: absolute; top: -2px; bottom: -2px; left: calc(var(--commit) * 100%); width: 2px; background: var(--ink); }
+#diveMeter.locked { border-color: rgba(242, 194, 48, 0.6); box-shadow: 0 0 18px rgba(242, 194, 48, 0.25); }
+
+/* Scouting card: one line about the opponent's habits. */
+#scout {
+  position: absolute; left: 50%; top: 112px; transform: translateX(-50%);
+  width: min(380px, calc(100% - 32px)); display: grid; gap: 2px; padding: 10px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--cpu); border-radius: 4px;
+  pointer-events: none; animation: lift 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+#scout small { font: 500 10px var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+#scout b { font: 700 15px var(--display); color: var(--cpu); }
+#scout span { font-size: 14px; line-height: 1.35; }
+#stage.replaying #scout, #stage.replaying #diveMeter { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { #scout { animation: none; } }

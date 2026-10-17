@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { readSwipe } from './input/swipe.js';
-import { HALF, GOAL_H, POST_R, R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, KEEPER_Z, REACH, RUNUP, netDepth } from './core/constants.js';
+import { HALF, GOAL_H, POST_R, R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, KEEPER_Z, REACH, RUNUP, COMMIT, netDepth } from './core/constants.js';
 import { clamp, lerp } from './core/math.js';
 import { createRng } from './core/random.js';
 import { rand, gauss } from './core/visual-random.js';
@@ -8,9 +8,12 @@ import { createWorld } from './render/world.js';
 import { createEffects, GOLD } from './render/effects.js';
 import { makePerson, KITS, animateRunup, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './render/people.js';
 import { createBallState, launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
-import { createBallMesh } from './render/ball.js';
+import { createBallMesh, createBallTracking } from './render/ball.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
+import { planShot, reconsider, executeShot } from './ai/taker.js';
+import { keeperPlan, readDive } from './ai/keeper.js';
+import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { TEAMS, YOU, createCup, recordResult, standings, currentFixture, goalDifference, teamName } from './tournament/cup.js';
 
 export function startGame() {
@@ -58,6 +61,8 @@ let keeper = newKeeper(keepers.cpu);
 
 // ------------------------------------------------------------------ ball (physics/ball.js, render/ball.js)
 const ball = { ...createBallState(), mesh: createBallMesh(world) };
+const ballTracking = createBallTracking(world);
+let goalFade = 0;
 function placeBall() {
   ball.pos.set(0, R, SPOT_Z); ball.vel.set(0, 0, 0); ball.spin = 0; ball.moving = false;
   ball.mesh.position.copy(ball.pos);
@@ -134,7 +139,7 @@ $('mute').addEventListener('click', () => {
 });
 
 // ------------------------------------------------------------------ match
-const match = { level: 'pro', you: [], cpu: [], turn: 'you', phase: 'menu', early: false, timer: 0 };
+const match = { level: 'pro', you: [], cpu: [], turn: 'you', phase: 'menu', timer: 0, plan: null, dive: null, committed: false };
 let shot = null;
 let level = LEVELS.pro;
 
@@ -171,8 +176,9 @@ const hint = (t) => { $('hint').textContent = t; };
 
 // The opponent decides how good their keeper and takers are, their kit,
 // and the colour of their half of the crowd.
+// A quick match draws a random playing style so every match has habits to spot.
 function quickOpponent() {
-  return { mode: 'quick', name: 'CPU', code: 'CPU', color: 0x2fc6b4, params: LEVELS[match.level], label: '' };
+  return { mode: 'quick', name: 'CPU', code: 'CPU', color: 0x2fc6b4, params: LEVELS[match.level], label: '', style: rng.pick(STYLE_KEYS) };
 }
 function dressOpponent(o) {
   const col = new THREE.Color(o.color);
@@ -194,6 +200,7 @@ function startMatch(o) {
   party = false; post = null; replay = null; rec = null; endReplayLook();
   match.you = []; match.cpu = [];
   $('menu').hidden = true; $('end').hidden = true; $('hud').hidden = false;
+  showScout(o, 6);
   sfx.whistle();
   nextTurn();
 }
@@ -207,6 +214,7 @@ function nextTurn() {
 
 function setupYourKick() {
   match.turn = 'you'; match.phase = 'aim'; shot = null;
+  $('diveMeter').hidden = true;
   placeBall();
   hideKeeper(keepers.you); keepers.cpu.root.visible = true;
   keeper = newKeeper(keepers.cpu); keeper.active = true; keeper.maxShift = level.shift;
@@ -218,8 +226,37 @@ function setupYourKick() {
   if (!coached) $('coach').hidden = false;
 }
 
+// A short scouting card about the opponent's style.
+let scoutTimer = 0;
+function showScout(o, seconds) {
+  const st = styleOf(o.style);
+  $('scoutLabel').textContent = st.label;
+  $('scoutText').textContent = st.scout;
+  $('scout').hidden = false;
+  clearTimeout(scoutTimer);
+  scoutTimer = setTimeout(() => { $('scout').hidden = true; }, seconds * 1000);
+}
+
+// The dive timing bar: fills during the run-up; red until the plant foot
+// (COMMIT), gold after it. Diving in the red lets the taker switch sides.
+$('diveMeter').style.setProperty('--commit', String(COMMIT / RUNUP));
+function renderDiveMeter() {
+  const el = $('diveMeter');
+  const active = match.turn === 'cpu' && (match.phase === 'runup' || (match.phase === 'flight' && shot && !shot.done));
+  el.hidden = !active;
+  if (!active) return;
+  const t = match.phase === 'runup' ? match.timer : RUNUP;
+  el.style.setProperty('--fill', String(clamp(t / RUNUP, 0, 1)));
+  const locked = t >= COMMIT, d = match.dive;
+  el.classList.toggle('locked', locked && !d);
+  el.classList.toggle('dived', !!d && !d.early);
+  el.classList.toggle('early', !!d && d.early);
+  $('diveLabel').textContent = d ? (d.early ? 'Early!' : 'Dived') : locked ? 'Dive!' : 'Wait';
+}
+
 function setupCpuKick() {
-  match.turn = 'cpu'; match.phase = 'runup'; match.early = false; match.timer = 0; shot = null;
+  match.turn = 'cpu'; match.phase = 'runup'; match.timer = 0; shot = null;
+  match.plan = planShot(match.opp.style, rng); match.dive = null; match.committed = false;
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
   keeper = newKeeper(keepers.you); keeper.active = true; keeper.maxShift = 1.85;
@@ -227,8 +264,10 @@ function setupCpuKick() {
   animateRunup(taker, 0);
   startRecording(false);
   camGoal = 'keeper';
-  banner('Save it', 'Tap where you want to dive', 'info', 1000);
+  banner('Save it', 'Wait for the gold bar, then tap where to dive', 'info', 1100);
   hint('Tap a spot in the goal to dive there.');
+  if (match.cpu.length === 0) showScout(match.opp, 4);
+  renderDiveMeter();
 }
 
 // ---------------- your kick: read the swipe
@@ -293,10 +332,9 @@ function shoot(kick) {
   sfx.kick(kick.power);
   startShot();
   shot.intent = kick;
-  // the keeper's move: either a gamble at the moment of the kick or a read after his reaction time
-  if (rng.chance(level.gamble)) {
-    keeper.pending = { at: 0.04, x: rng.sign() * rng.range(1.6, 3.2), y: rng.range(0.3, 1.9) };
-  } else keeper.pending = { at: level.react, read: true };
+  // The keeper's one decision: a guess at the strike or a read after its reaction time.
+  keeper.pending = keeperPlan(level, match.opp.style, rng);
+  shot.keeper = { kind: keeper.pending.kind, target: null };
   hint('');
 }
 
@@ -315,22 +353,24 @@ function playerDive(e) {
   if (Math.abs(d.z) < 1e-4) return;
   const t = (KEEPER_Z - o.z) / d.z;
   if (t <= 0) return;
-  planDive(keeper, clamp(o.x + d.x * t, -4.6, 4.6), clamp(o.y + d.y * t, 0, 2.9));
-  if (match.phase === 'runup') match.early = true;
+  diveTo(clamp(o.x + d.x * t, -4.6, 4.6), clamp(o.y + d.y * t, 0, 2.9));
+}
+// Your dive, recorded with its timing: before the plant foot (COMMIT) is
+// early and lets the taker switch; after the strike, timing is measured
+// against the ball's flight.
+function diveTo(x, y) {
+  planDive(keeper, x, y);
+  const at = match.phase === 'runup' ? match.timer : RUNUP + (shot ? shot.t : 0);
+  match.dive = { x, y, at, early: at < COMMIT };
   hint('');
 }
 
 function cpuShoot() {
-  let side = rng.sign();
-  if (match.early && keeper.dive && rng.chance(level.reAim)) side = -Math.sign(keeper.dive.toX || 1);
-  let tx, ty;
-  if (rng.chance(0.12)) { tx = rng.range(-0.6, 0.6); ty = rng.range(1.3, 2.1); }
-  else { tx = side * rng.range(1.4, 3.45); ty = rng.range(0.15, 2.15); }
-  tx += rng.gauss() * level.cpuErr; ty += rng.gauss() * level.cpuErr * 0.8;
-  const T = rng.range(0.55, 0.8);
-  launch(new THREE.Vector3(tx, Math.max(R, ty), 0), T, rng.range(-10, 10));
+  const k = executeShot(match.plan, match.opp.style, level, rng);
+  launch(new THREE.Vector3(k.target.x, k.target.y, 0), k.T, k.spin);
   sfx.kick(0.7);
   startShot();
+  shot.cpu = { target: k.target, T: k.T, plan: match.plan };
 }
 
 // ---------------- deciding the result
@@ -352,6 +392,7 @@ function judge() {
 }
 function resolve(kind) {
   shot.done = true; shot.after = 0;
+  $('diveMeter').hidden = true;
   const mine = match.turn === 'you';
   const scored = kind === 'goal';
   (mine ? match.you : match.cpu).push(scored);
@@ -516,6 +557,7 @@ function endReplayLook() {
 
 function endMatch(w) {
   match.phase = 'end';
+  $('diveMeter').hidden = true; $('scout').hidden = true;
   const gy = goals(match.you), gc = goals(match.cpu);
   const sd = match.you.length > 5;
   $('endEyebrow').textContent = sd ? 'Decided in sudden death' : 'Full time';
@@ -579,7 +621,7 @@ function playCupMatch() {
   const fx = currentFixture(tour);
   if (!fx) return;
   const t = TEAMS[fx.opp];
-  startMatch({ mode: 'cup', name: t.name, code: t.code, color: t.color, params: paramsFor(t.rating), label: fx.label });
+  startMatch({ mode: 'cup', name: t.name, code: t.code, color: t.color, params: paramsFor(t.rating), label: fx.label, style: t.style });
 }
 const nm = teamName;
 // Records your result and moves the cup on. Returns one line for the end screen.
@@ -610,7 +652,8 @@ function showHub() {
   if (fx) {
     const r = TEAMS[fx.opp].rating, stars = Math.max(1, Math.round(r * 5));
     $('hubFixture').innerHTML = `<div class="who"><small>${fx.label} · next match</small>${sw(fx.opp)}${nm(fx.opp)}</div>
-      <div class="stars">Keeper <b>${'●'.repeat(stars)}${'○'.repeat(5 - stars)}</b></div>`;
+      <div class="stars">Keeper <b>${'●'.repeat(stars)}${'○'.repeat(5 - stars)}</b></div>
+      <p class="scouting"><b>${styleOf(TEAMS[fx.opp].style).label}.</b> ${styleOf(TEAMS[fx.opp].style).scout}</p>`;
   }
   const table = (title, group) => {
     const order = standings(tour, group);
@@ -767,17 +810,22 @@ function tick(dt) {
   if (match.phase === 'runup') {
     match.timer += sdt;
     animateRunup(taker, match.timer);
+    // The plant foot: the taker's last look at the keeper, then the shot is locked.
+    if (!match.committed && match.timer >= COMMIT) {
+      match.committed = true;
+      match.plan = reconsider(match.plan, match.dive && match.dive.early ? match.dive : null, match.opp.style, level, rng);
+    }
     if (match.timer >= RUNUP) cpuShoot();
   }
+  if (match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight')) renderDiveMeter();
 
   if (keeper.pending && shot) {
     keeper.pending.at -= sdt;
     if (keeper.pending.at <= 0) {
       const pd = keeper.pending; keeper.pending = null;
-      if (pd.read) {
-        const c = predictCrossing(ball, level.readSpin);
-        planDive(keeper, c.x + rng.gauss() * level.err, clamp(c.y + rng.gauss() * level.err * 0.6, 0, 2.8));
-      } else planDive(keeper, pd.x, pd.y);
+      const target = pd.kind === 'read' ? readDive(predictCrossing(ball, pd.readSpin), level, match.opp.style, rng) : { x: pd.x, y: pd.y };
+      planDive(keeper, target.x, target.y);
+      shot.keeper.target = target;
     }
   }
   if (!replay) updateKeeper(keeper, sdt, time);
@@ -824,6 +872,11 @@ function tick(dt) {
   }
   updateTowers(dt);
   updateCamera(dt, time);
+  // Keeper view: fade what blocks the view and highlight the ball.
+  const keeperView = camGoal === 'keeper' ? 1 : 0;
+  goalFade += (keeperView - goalFade) * Math.min(1, dt * 6);
+  world.setGoalFade(goalFade);
+  ballTracking.update(ball.pos, ball.moving && !replay, 0.45 + 0.55 * keeperView, dt);
 }
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;

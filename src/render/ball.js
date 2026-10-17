@@ -26,3 +26,41 @@ export function createBallMesh(world) {
   world.scene.add(mesh);
   return mesh;
 }
+
+// Helpers that make a fast, small ball easy to follow: a soft glow around
+// it and a short fading trail of where it has just been.
+const TRAIL_N = 18;
+export function createBallTracking(world) {
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: world.glowTex, color: 0xfff4d0, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  }));
+  halo.scale.set(0.9, 0.9, 1);
+  world.scene.add(halo);
+
+  const pos = new Float32Array(TRAIL_N * 3), col = new Float32Array(TRAIL_N * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const trail = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  trail.frustumCulled = false;
+  world.scene.add(trail);
+  const history = [];
+  let strength = 0;
+
+  // emphasis 0..1: how strongly to highlight (stronger when you keep goal).
+  function update(ballPos, moving, emphasis, dt) {
+    strength += ((moving ? emphasis : 0) - strength) * Math.min(1, dt * 10);
+    halo.position.copy(ballPos);
+    halo.material.opacity = 0.55 * strength;
+    if (moving) { history.unshift(ballPos.clone()); if (history.length > TRAIL_N) history.pop(); } else history.length = 0;
+    for (let i = 0; i < TRAIL_N; i++) {
+      const p = history[Math.min(i, history.length - 1)] || ballPos;
+      pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+      const k = strength * (1 - i / TRAIL_N) * 0.8;
+      col[i * 3] = k; col[i * 3 + 1] = k * 0.92; col[i * 3 + 2] = k * 0.7;
+    }
+    geo.attributes.position.needsUpdate = true;
+    geo.attributes.color.needsUpdate = true;
+  }
+  return { update };
+}
