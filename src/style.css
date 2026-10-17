@@ -25,7 +25,8 @@ body { background: var(--night); color: var(--ink); font-family: var(--body); ov
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   display: grid; grid-template-columns: auto auto auto; align-items: center; gap: 4px 16px;
   padding: 8px 16px 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
-  max-width: calc(100% - 32px); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  width: max-content; max-width: calc(100% - 136px); box-sizing: border-box;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .hud[hidden] { display: none !important; }
 .side { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -34,7 +35,7 @@ body { background: var(--night); color: var(--ink); font-family: var(--body); ov
 .you .tag { color: var(--you); }
 .cpu .tag { color: var(--cpu); }
 .score { font-family: var(--mono); font-weight: 700; font-size: 26px; color: var(--flood); font-variant-numeric: tabular-nums; min-width: 1ch; text-align: center; }
-.dots { display: flex; gap: 5px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; max-width: 140px; }
+.dots { display: flex; gap: 5px; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; max-width: 140px; min-width: 0; }
 .side.cpu .dots { flex-direction: row-reverse; }
 .dots li { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid rgba(238, 241, 248, 0.35); }
 .dots li.goal { background: #4cd37a; border-color: #4cd37a; box-shadow: 0 0 8px rgba(76, 211, 122, 0.7); }
@@ -73,7 +74,7 @@ body { background: var(--night); color: var(--ink); font-family: var(--body); ov
 @keyframes blink { to { visibility: hidden; } }
 
 #mute {
-  position: absolute; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  position: absolute; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); min-height: 40px;
   font: 600 12px var(--body); letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; cursor: pointer;
 }
@@ -180,7 +181,7 @@ h1.mid { font-size: clamp(30px, 6.5vw, 48px); }
 .pick .go-arrow { position: absolute; right: 18px; top: 18px; font: 900 22px var(--display); color: var(--you); }
 .pick.cup { background: linear-gradient(160deg, rgba(64, 50, 10, 0.9), rgba(16, 13, 6, 0.94)); border-color: rgba(242, 194, 48, 0.45); }
 .picker .levels { gap: 4px; }
-.picker .levels button { font-size: 11px; padding: 8px 2px 7px; background: rgba(8, 12, 24, 0.7); }
+.picker .levels button { font-size: 11px; padding: 8px 2px 7px; min-height: 40px; background: rgba(8, 12, 24, 0.7); }
 .picker .levels button[aria-pressed="true"] { background: var(--flood); color: var(--night); border-color: var(--flood); }
 .picker .levelNote { margin: 0; min-height: 0; font-size: 12px; text-align: center; }
 .corner { position: absolute; left: 16px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); margin: 0; font: 500 11px var(--mono); letter-spacing: 0.1em; color: var(--muted); }
@@ -206,7 +207,12 @@ h1.mid { font-size: clamp(30px, 6.5vw, 48px); }
 button:focus-visible { outline: 2px solid var(--flood); outline-offset: 2px; }
 #fail { position: absolute; inset: 0; display: grid; place-items: center; padding-inline: 16px; text-align: center; color: var(--muted); }
 @media (max-width: 520px) {
-  .tag { font-size: 15px; } .score { font-size: 22px; } .dots li { width: 9px; height: 9px; } .hud { gap: 3px 10px; padding: 7px 10px; }
+  /* Phones: the scoreboard fills the space beside the pause button. */
+  .hud { left: 64px; right: 12px; transform: none; width: auto; max-width: none; gap: 3px 8px; padding: 6px 10px; justify-content: center; }
+  .tag { font-size: 13px; } .score { font-size: 20px; } .side { gap: 6px; }
+  .dots { gap: 4px; flex: 0 0 56px; } .dots li { width: 8px; height: 8px; border-width: 1.3px; box-sizing: border-box; }   /* five dots per row */
+  .round { font-size: 10px; letter-spacing: 0.1em; }
+  #scout { top: 96px; }
 }
 @media (prefers-reduced-motion: reduce) { #banner.show { animation: none; } #replayTag i { animation: none; } .bar { transition: none; } }
 
@@ -316,3 +322,19 @@ kbd { font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--l
 }
 .seg button[aria-checked="true"], .switch[aria-checked="true"] { background: var(--flood); color: var(--night); border-color: var(--flood); }
 .switch { justify-self: start; min-width: 88px; }
+
+/* Keyboard power meter: same shape as the dive bar. */
+#powerMeter {
+  --fill: 0;
+  position: absolute; left: 50%; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  width: min(360px, calc(100% - 32px)); display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px;
+  padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; pointer-events: none;
+}
+#powerMeter .dm-label { color: var(--flood); min-width: 12ch; }
+#powerMeter .dm-track { background: rgba(246, 231, 168, 0.18); }
+#powerMeter .dm-fill { background: linear-gradient(90deg, var(--flood), var(--you)); }
+
+/* The in-game Motion setting: same effect as the system "reduce motion" option. */
+#stage.reduce-motion *, #stage.reduce-motion *::before, #stage.reduce-motion *::after {
+  animation: none !important; transition: none !important;
+}

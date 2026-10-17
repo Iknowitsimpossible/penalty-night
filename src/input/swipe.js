@@ -81,7 +81,7 @@ export function readSwipe(pts, width, height) {
 
   const { aimX, aimY } = aimFrom(dxU, upU);
   return {
-    kick: { aimX, aimY, T: flightTime(power), spin: curl * SWIPE.maxSpin, power, curl, speed, upU },
+    kick: { aimX, aimY, T: flightTime(power), spin: curl * SWIPE.maxSpin, power, curl, speed, upU, input: 'swipe' },
     reason: null,
   };
 }
@@ -89,5 +89,5 @@ export function readSwipe(pts, width, height) {
 // Keyboard kick: aim marker in goal metres, power 0..1 from the hold meter,
 // curl -1..1 from Z / X (+1 bends the flight out to the right, like a swipe bowing right).
 export function keyboardKick(aimX, aimY, power, curl) {
-  return { aimX, aimY: Math.max(0.11, aimY), T: flightTime(power), spin: clamp(curl, -1, 1) * SWIPE.maxSpin, power, curl, speed: null, upU: null };
+  return { aimX, aimY: Math.max(0.11, aimY), T: flightTime(power), spin: clamp(curl, -1, 1) * SWIPE.maxSpin, power, curl, speed: null, upU: null, input: 'keyboard' };
 }

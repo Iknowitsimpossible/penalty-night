@@ -22,8 +22,12 @@
     <div class="round" id="round">Round 1 of 5</div>
   </header>
 
-  <div id="banner"><b id="bannerText"></b><span id="bannerSub"></span></div>
-  <p id="hint"></p>
+  <div id="banner" role="status" aria-live="polite"><b id="bannerText"></b><span id="bannerSub"></span></div>
+  <p id="hint" aria-live="polite"></p>
+  <div id="powerMeter" hidden aria-hidden="true">
+    <span class="dm-label" id="powerLabel">Hold Space</span>
+    <div class="dm-track"><i class="dm-fill"></i></div>
+  </div>
 
   <div id="diveMeter" hidden aria-hidden="true">
     <span class="dm-label" id="diveLabel">Wait</span>

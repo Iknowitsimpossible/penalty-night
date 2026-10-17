@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { readSwipe } from './input/swipe.js';
+import { readSwipe, keyboardKick } from './input/swipe.js';
 import { HALF, GOAL_H, POST_R, R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1, KEEPER_Z, REACH, RUNUP, COMMIT, netDepth } from './core/constants.js';
 import { clamp, lerp } from './core/math.js';
 import { createRng } from './core/random.js';
@@ -9,6 +9,7 @@ import { createEffects, GOLD } from './render/effects.js';
 import { makePerson, KITS, animateRunup, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './render/people.js';
 import { createBallState, launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
 import { createBallMesh, createBallTracking } from './render/ball.js';
+import { createCameraDirector } from './render/camera.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
@@ -17,7 +18,7 @@ import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { explainKick, explainSave } from './feedback/explain.js';
 import { createFeedbackCard } from './ui/feedback-card.js';
 import { createSettingsPanel } from './ui/settings-panel.js';
-import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength } from './ui/settings.js';
+import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength, reducedMotion } from './ui/settings.js';
 import { TEAMS, YOU, createCup, recordResult, standings, currentFixture, goalDifference, teamName } from './tournament/cup.js';
 
 export function startGame() {
@@ -33,6 +34,8 @@ const storage = (() => {
   }
 })();
 const settings = loadSettings(storage);
+const motionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+let motionReduced = false;
 
 const LEVELS = {
   amateur: { note: 'Slow keeper who guesses a lot. Their takers miss often.',
@@ -61,8 +64,19 @@ function bulgeNet(at, dir, strength, fromReplay) {
 
 // ------------------------------------------------------------------ celebration effects (render/effects.js)
 let cpuPal = [0x2fc6b4, 0x9ff2e6, 0xffffff];   // confetti for the opponent's fans
-const effects = createEffects(world, { behindGoal: () => camGoal === 'keeper', onFirework: () => sfx.pop() });
-const { burstConfetti, updateConfetti, firework, updateFireworks, updateFlashes } = effects;
+const effects = createEffects(world, { behindGoal: () => cam.goal === 'keeper', onFirework: () => sfx.pop() });
+const { updateConfetti, updateFireworks, updateFlashes } = effects;
+// With reduced motion: no confetti, fireworks or camera flashes.
+const burstConfetti = (...args) => { if (!motionReduced) effects.burstConfetti(...args); };
+const firework = (color) => { if (!motionReduced) effects.firework(color); };
+const flash = (rate) => effects.setFlashRate(motionReduced ? 0 : rate);
+
+function applyMotion() {
+  motionReduced = reducedMotion(settings, motionQuery && motionQuery.matches);
+  stage.classList.toggle('reduce-motion', motionReduced);
+}
+if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', applyMotion);
+applyMotion();
 
 // ------------------------------------------------------------------ people (render/people.js)
 const keepers = { cpu: makePerson(scene, KITS.cpuKeeper), you: makePerson(scene, KITS.youKeeper) };
@@ -239,15 +253,16 @@ function nextTurn() {
 
 function setupYourKick() {
   match.turn = 'you'; match.phase = 'aim'; shot = null;
+  kb.x = 0; kb.y = 1.2; kb.curl = 0; kb.power = 0; kb.charging = false;
   $('diveMeter').hidden = true;
   placeBall();
   hideKeeper(keepers.you); keepers.cpu.root.visible = true;
   keeper = newKeeper(keepers.cpu); keeper.active = true; keeper.maxShift = level.shift;
   taker.root.visible = false; striker.root.visible = false;
-  camGoal = 'shoot';
+  cam.goal = 'shoot';
   const round = match.you.length + 1;
   banner(round <= 5 ? 'Your kick' : 'Sudden death', round <= 5 ? `Kick ${round} of 5` : 'Score and they must answer', 'info', 1100);
-  hint('Swipe up from the ball. Curve the swipe to bend it.');
+  hint(kb.active ? 'Arrows to aim, hold Space for power. Z / X to curl.' : 'Swipe up from the ball. Curve the swipe to bend it.');
   if (!coached) $('coach').hidden = false;
 }
 
@@ -282,15 +297,16 @@ function renderDiveMeter() {
 function setupCpuKick() {
   match.turn = 'cpu'; match.phase = 'runup'; match.timer = 0; shot = null;
   match.plan = planShot(match.opp.style, rng); match.dive = null; match.committed = false;
+  kb.x = 0; kb.y = 1.0;
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
   keeper = newKeeper(keepers.you); keeper.active = true; keeper.maxShift = 1.85;
   taker.root.visible = true; striker.root.visible = false;
   animateRunup(taker, 0);
   startRecording(false);
-  camGoal = 'keeper';
+  cam.goal = 'keeper';
   banner('Save it', 'Wait for the gold bar, then tap where to dive', 'info', 1100);
-  hint('Tap a spot in the goal to dive there.');
+  hint(kb.active ? 'Arrows to aim, Space to dive.' : 'Tap a spot in the goal to dive there.');
   if (match.cpu.length === 0) showScout(match.opp, 4);
   renderDiveMeter();
 }
@@ -311,6 +327,7 @@ function trySkip() {
 }
 canvas.addEventListener('pointerdown', (e) => {
   initAudio();
+  kb.active = false;
   if (trySkip()) return;
   if (match.phase === 'aim') {
     const p = stagePoint(e);
@@ -350,7 +367,9 @@ function shoot(kick) {
   markCoached();
   const { aimX, aimY, T, spin } = kick;
   startRecording(true);
-  launch(new THREE.Vector3(aimX, aimY, 0), T, spin);
+  // Keyboard aim is pixel-perfect, so harder keyboard kicks spread a little.
+  const spread = kick.spread || 0;
+  launch(new THREE.Vector3(aimX + rng.gauss() * spread, Math.max(0.11, aimY + rng.gauss() * spread * 0.7), 0), T, spin);
   sfx.kick(kick.power);
   startShot();
   shot.intent = kick;
@@ -469,25 +488,25 @@ function startCelebration(kind, mine, scored) {
   const at = (time, fn) => post.fx.push({ time, fn });
   if (mine && scored) {
     post.dur = 3.6;
-    at(0.15, () => { burstConfetti(-13, 6, -11, 10, 280, GOLD, 9); effects.setFlashRate(40); });
+    at(0.15, () => { burstConfetti(-13, 6, -11, 10, 280, GOLD, 9); flash(40); });
     at(0.35, () => firework(0xf2c230)); at(0.9, () => firework(0xffffff)); at(1.5, () => firework(0xf2c230));
     at(1.9, () => burstConfetti(-13, 6, -11, 10, 200, GOLD, 8));
     post.run = { body: striker, from: new THREE.Vector3(0.25, 0, 11.3), to: new THREE.Vector3(-8.6, 0, 1.4), start: 0.8, speed: 7, slide: true, arms: 'plane' };
   } else if (!mine && scored) {
     post.dur = 2.4;
-    at(0.15, () => { burstConfetti(13, 6, -11, 9, 180, cpuPal, 8); effects.setFlashRate(18); });
+    at(0.15, () => { burstConfetti(13, 6, -11, 9, 180, cpuPal, 8); flash(18); });
     post.run = { body: taker, from: taker.root.position.clone(), to: new THREE.Vector3(7.5, 0, 2.6), start: 0.35, speed: 6.2, slide: false, arms: 'pump' };
   } else if (kind === 'saved') {
     post.dur = mine ? 2.0 : 2.6;
     post.cheerAt = 0.6;
-    if (!mine) { at(0.2, () => { burstConfetti(-13, 6, -11, 10, 220, GOLD, 8); effects.setFlashRate(26); }); at(0.6, () => firework(0xf2c230)); }
-    else at(0.2, () => { burstConfetti(13, 6, -11, 9, 120, cpuPal, 7); effects.setFlashRate(10); });
+    if (!mine) { at(0.2, () => { burstConfetti(-13, 6, -11, 10, 220, GOLD, 8); flash(26); }); at(0.6, () => firework(0xf2c230)); }
+    else at(0.2, () => { burstConfetti(13, 6, -11, 9, 120, cpuPal, 7); flash(10); });
   } else if (!mine) {
-    at(0.2, () => { burstConfetti(-13, 6, -11, 10, 120, GOLD, 7); effects.setFlashRate(12); });
+    at(0.2, () => { burstConfetti(-13, 6, -11, 10, 120, GOLD, 7); flash(12); });
   }
   // Short celebrations keep the first burst of colour but skip the run to the
   // fans and the later fireworks. Either way the card stays up long enough to read.
-  if (celebrationLength(settings, match.mode) === 'short') {
+  if (motionReduced || celebrationLength(settings, match.mode) === 'short') {
     post.run = null;
     post.fx = post.fx.slice(0, 1);
     post.dur = 2.6;
@@ -517,7 +536,7 @@ function runCelebration(r, dt) {
   if (!r.pos) {
     r.pos = r.from.clone(); r.v = 0; r.phase = 0; r.t = 0;
     b.root.visible = true; b.root.position.copy(r.pos);
-    if (b === striker) camGoal = 'celebrate';
+    if (b === striker) cam.goal = 'celebrate';
   }
   r.t += dt;
   const dx = r.to.x - r.pos.x, dz = r.to.z - r.pos.z, dist = Math.hypot(dx, dz);
@@ -587,9 +606,9 @@ function startReplay() {
   rec.taker.root.position.y = 0;
   stage.classList.add('replaying');
   $('replayTag').hidden = false; $('skipTag').hidden = false; $('skipTag').classList.remove('low');
-  camGoal = 'replay';
+  cam.goal = 'replay';
   updateReplay(0);
-  camPos.copy(wantPos); camLook.copy(wantLook);
+  cam.snap();
 }
 function updateReplay(dt) {
   replay.t += dt * 0.5;
@@ -609,8 +628,13 @@ function updateReplay(dt) {
     bulgeNet(e.at, e.dir, e.s, true);
   }
   // low side camera on the side the ball went, following the ball
-  wantPos.set(replay.side * 8.2, 1.2, lerp(6.5, 3.2, clamp((SPOT_Z - ball.pos.z) / SPOT_Z, 0, 1)));
-  wantLook.set(ball.pos.x * 0.8, Math.max(0.7, ball.pos.y), ball.pos.z);
+  if (motionReduced) {
+    // a fixed side view instead of following the ball
+    cam.wantPos.set(replay.side * 9, 1.6, 5.5); cam.wantLook.set(replay.side * 0.8, 1, 4);
+  } else {
+    cam.wantPos.set(replay.side * 8.2, 1.2, lerp(6.5, 3.2, clamp((SPOT_Z - ball.pos.z) / SPOT_Z, 0, 1)));
+    cam.wantLook.set(ball.pos.x * 0.8, Math.max(0.7, ball.pos.y), ball.pos.z);
+  }
   if (replay.t >= replay.end + 0.4) finishPost();
 }
 function endReplayLook() {
@@ -637,9 +661,9 @@ function endMatch(w) {
     $('again').textContent = 'Play again'; $('toMenu').hidden = false;
     const record = loadRecord(); record[w === 'you' ? 'w' : 'l']++; saveRecord(record);
   }
-  hint(''); sfx.whistle(); if (w === 'you') { sfx.roar(true); party = true; effects.setFlashRate(40); }
+  hint(''); sfx.whistle(); if (w === 'you') { sfx.roar(true); party = true; flash(40); }
   $('pauseBtn').hidden = true;
-  endTimer = setTimeout(() => { $('end').hidden = false; $('hud').hidden = true; }, 900);
+  endTimer = setTimeout(() => { $('end').hidden = false; $('hud').hidden = true; $('again').focus(); }, 900);
 }
 
 function loadRecord() {
@@ -702,9 +726,9 @@ function showHub() {
   if (!tour) newCup();
   $('end').hidden = true; $('menu').hidden = true; $('hud').hidden = true; $('hub').hidden = false;
   hint('');
-  match.phase = 'menu'; camGoal = 'menu';
+  match.phase = 'menu'; cam.goal = 'menu';
   party = tour.stage === 'champion';
-  if (party) effects.setFlashRate(30);
+  if (party) flash(30);
   const sw = (i) => `<span class="sw" style="background:#${new THREE.Color(TEAMS[i].color).getHexString()}"></span>`;
   const stageName = { group: 'Group stage', semi: 'Semifinals', final: 'Final', champion: 'Champions', out: 'Knocked out' }[tour.stage];
   $('hubEyebrow').textContent = `The Night Cup · ${stageName}`;
@@ -747,6 +771,7 @@ function showHub() {
   $('hubPlay').hidden = done;
   $('hubRestart').textContent = done ? 'Play the cup again' : 'Start a new cup';
   $('hubRestart').className = done ? 'go' : 'ghost';
+  (done ? $('hubRestart') : $('hubPlay')).focus();
 }
 
 // ---------------- menus
@@ -767,12 +792,74 @@ $('hubMenu').addEventListener('click', () => { $('hub').hidden = true; party = f
 $('hubRestart').addEventListener('click', () => { newCup(); showHub(); });
 $('toMenu').addEventListener('click', () => { $('end').hidden = true; match.phase = 'menu'; party = false; showPicker(); });
 
+// ---------------- keyboard play
+// Arrows move a target in the goal (the same keys for both roles).
+// Shooting: hold Space to fill the power meter, release to shoot; Z / X curl.
+// Keeping: Space dives to the target.
+const kb = { x: 0, y: 1.2, held: new Set(), charging: false, power: 0, curl: 0, active: false };
+const markerTex = world.canvasTexture(128, 128, (c, w, h) => {
+  c.strokeStyle = '#f6e7a8'; c.lineWidth = 9;
+  c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 12, 0, Math.PI * 2); c.stroke();
+  c.fillStyle = '#f6e7a8'; c.beginPath(); c.arc(w / 2, h / 2, 9, 0, Math.PI * 2); c.fill();
+});
+const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, transparent: true, depthTest: false, fog: false }));
+marker.scale.set(0.55, 0.55, 1); marker.visible = false; marker.renderOrder = 10;
+scene.add(marker);
+const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+const kbShooting = () => match.turn === 'you' && match.phase === 'aim' && !post;
+const kbKeeping = () => match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight') && !keeper.dive && !post;
+const CURL_TEXT = { '-1': ' · curl ←', 0: '', 1: ' · curl →' };
+function updateKeyboard(dt) {
+  const shooting = kbShooting(), keeping = kbKeeping();
+  if (shooting || keeping) {
+    let dx = (kb.held.has('ArrowRight') ? 1 : 0) - (kb.held.has('ArrowLeft') ? 1 : 0);
+    const dy = (kb.held.has('ArrowUp') ? 1 : 0) - (kb.held.has('ArrowDown') ? 1 : 0);
+    if (keeping) dx = -dx;          // facing the taker, screen right is world -x
+    kb.x = clamp(kb.x + dx * 3.2 * dt, -4.3, 4.3);
+    kb.y = clamp(kb.y + dy * 2.4 * dt, 0.15, 2.9);
+  }
+  if (kb.charging) kb.power = Math.min(1, kb.power + dt / 0.9);
+  marker.visible = kb.active && (shooting || keeping);
+  marker.position.set(kb.x, kb.y, keeping ? KEEPER_Z + 0.05 : 0);
+  const pm = $('powerMeter');
+  pm.hidden = !(kb.active && shooting);
+  if (!pm.hidden) {
+    pm.style.setProperty('--fill', String(kb.power));
+    $('powerLabel').textContent = (kb.charging ? 'Power' : 'Hold Space') + CURL_TEXT[kb.curl];
+  }
+}
+function keyboardShoot() {
+  kb.charging = false;
+  const kick = keyboardKick(kb.x, kb.y, kb.power, kb.curl);
+  kick.spread = 0.1 + 0.3 * kb.power * kb.power;
+  kb.power = 0;
+  shoot(kick);
+}
+function handlePlayKey(e, k) {
+  if (ARROWS.includes(k)) { kb.held.add(k); kb.active = true; e.preventDefault(); return true; }
+  if (k === ' ' && kbShooting()) {
+    e.preventDefault(); kb.active = true;
+    if (!kb.charging && !e.repeat) { kb.charging = true; kb.power = 0; initAudio(); }
+    return true;
+  }
+  if (k === ' ' && kbKeeping()) { e.preventDefault(); kb.active = true; initAudio(); diveTo(kb.x, kb.y); return true; }
+  if ((k === 'z' || k === 'x') && kbShooting()) {
+    const want = k === 'z' ? -1 : 1;
+    kb.curl = kb.curl === want ? 0 : want; kb.active = true; e.preventDefault(); return true;
+  }
+  return false;
+}
+document.addEventListener('keyup', (e) => {
+  kb.held.delete(e.key);
+  if (e.key === ' ' && kb.charging) { e.preventDefault(); if (kbShooting() && !paused) keyboardShoot(); else kb.charging = false; }
+});
+
 // ---------------- pause, restart, quit, settings
 let paused = false;
 const inMatch = () => match.phase === 'aim' || match.phase === 'runup' || match.phase === 'flight';
 function pause() {
   if (paused || !inMatch()) return;
-  paused = true; swipe = null;
+  paused = true; swipe = null; kb.charging = false; kb.held.clear();
   audio.suspend();
   $('pauseTitle').textContent = `${goals(match.you)} – ${goals(match.cpu)}`;
   $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : 'Paused';
@@ -821,6 +908,7 @@ $('quitBtn').addEventListener('click', quitMatch);
 const settingsPanel = createSettingsPanel($('settingsList'), settings, (key) => {
   saveSettings(storage, settings);
   if (key === 'sound') applySound();
+  if (key === 'motion') applyMotion();
 });
 let settingsReturn = null;
 function openSettings() {
@@ -855,7 +943,9 @@ document.addEventListener('keydown', (e) => {
   if (post) {
     if (k === ' ' || k === 'Enter') { e.preventDefault(); trySkip(); }
     else if (k === 'v') { e.preventDefault(); requestReplay(); }
+    return;
   }
+  handlePlayKey(e, k);
 });
 
 // ---------------- title: lights on, camera sweep, tap to play
@@ -863,16 +953,16 @@ let intro = null;
 function startIntro() {
   $('menu').hidden = false; $('attract').hidden = false; $('picker').hidden = true;
   $('logo').classList.remove('show'); $('tapToPlay').classList.remove('show');
-  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduce = motionReduced;
   intro = { t: reduce ? 9 : 0 };
   towers.forEach((tw) => { tw.on = reduce ? 1 : 0; });
-  camGoal = 'intro';
+  cam.goal = 'intro';
 }
 function showPicker() {
   intro = null;
   towers.forEach((tw) => { tw.on = 1; });
   $('menu').hidden = false; $('attract').hidden = true; $('picker').hidden = false;
-  if (camGoal !== 'pick') camGoal = 'pick';
+  if (cam.goal !== 'pick') cam.goal = 'pick';
   showRecord();
 }
 $('attract').addEventListener('click', () => {
@@ -882,64 +972,12 @@ $('attract').addEventListener('click', () => {
 setLevel('pro');
 showRecord();
 
-// ------------------------------------------------------------------ camera
-let camGoal = 'menu', baseFov = 50;
-const camPos = new THREE.Vector3(-3.5, 2.1, 16.7), camLook = new THREE.Vector3(-4.2, 1.6, 0);
-const wantPos = new THREE.Vector3(), wantLook = new THREE.Vector3();
-function updateCamera(dt, time) {
-  if (camGoal === 'intro' && intro) {
-    // from high above the far end, sweeping down to a low angle on the goal
-    const p = clamp(intro.t / 4.4, 0, 1), e = p * p * (3 - 2 * p);
-    const a = lerp(0.9, -0.42, e), r = lerp(70, 22.5, e);
-    camPos.set(Math.sin(a) * r, lerp(40, 4.2, e), Math.cos(a) * r);
-    camLook.set(0, lerp(0, 1.4, e), lerp(14, 0, e));
-    wantPos.copy(camPos); wantLook.copy(camLook);
-    if (p >= 1) { intro.orbit = intro.orbit || 0; intro.orbit += dt; }
-    if (intro.orbit !== undefined) {
-      const o = -0.42 + Math.sin(intro.orbit * 0.12) * 0.5;
-      camPos.set(Math.sin(o) * 22.5, 4.2 + Math.sin(intro.orbit * 0.2) * 0.4, Math.cos(o) * 22.5);
-      wantPos.copy(camPos);
-    }
-    camera.position.copy(camPos); camera.lookAt(camLook);
-    return;
-  } else if (camGoal === 'pick') {
-    const a = time * 0.25;
-    wantPos.set(Math.sin(a) * 0.25, 1.32, 15.6); wantLook.set(Math.sin(a * 0.8) * 0.3, 1.25, 0);
-  } else if (camGoal === 'menu') {
-    // a slow drift that keeps the floodlit goal on the right, clear of the title
-    const a = time * 0.12;
-    wantPos.set(-3.5 + Math.sin(a) * 1.5, 2.1 + Math.sin(a * 0.7) * 0.3, 15.5 + Math.cos(a) * 1.2);
-    wantLook.set(-4.2 + Math.sin(a) * 0.8, 1.6, 0);
-  } else if (camGoal === 'shoot') {
-    if (match.phase === 'flight' && shot) {
-      wantPos.set(ball.pos.x * 0.3, 1.4, Math.max(ball.pos.z + 5, 6.2)); wantLook.set(ball.pos.x * 0.5, 1.1, 0);
-    } else { wantPos.set(0, 1.45, 14.7); wantLook.set(0, 1.15, 0); }
-  } else if (camGoal === 'celebrate' && post && post.run && post.run.pos) {
-    // behind and beside the scorer, looking past him at his fans
-    const r = post.run, dx = r.to.x - r.from.x, dz = r.to.z - r.from.z, L = Math.hypot(dx, dz);
-    const fx = dx / L, fz = dz / L;
-    wantPos.set(r.pos.x - fx * 4 - fz * 2.4, 1.9, r.pos.z - fz * 4 + fx * 2.4);
-    wantLook.set(r.pos.x + fx * 2.5, 1.0, r.pos.z + fz * 2.5);
-  } else if (camGoal === 'replay') {
-    // wantPos / wantLook are set by updateReplay
-  } else if (camGoal === 'keeper') {
-    wantPos.set(0, 3.5, -6.4); wantLook.set(0, 0.7, 10);
-  }
-  const rate = camGoal === 'menu' ? 1.5 : camGoal === 'pick' ? 1.8 : camGoal === 'replay' ? 6 : camGoal === 'celebrate' ? 4 : 3.2;
-  const k = 1 - Math.exp(-dt * rate);
-  camPos.lerp(wantPos, k); camLook.lerp(wantLook, k);
-  camera.position.copy(camPos); camera.lookAt(camLook);
-  const fov = camGoal === 'replay' ? baseFov * 0.66 : baseFov;
-  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = lerp(camera.fov, fov, 1 - Math.exp(-dt * 5)); camera.updateProjectionMatrix(); }
-}
-
+// ------------------------------------------------------------------ camera (render/camera.js)
+const cam = createCameraDirector(camera);
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
   renderer.setSize(w, h, false);
-  camera.aspect = w / h;
-  baseFov = w / h < 1 ? clamp(50 / (w / h) * 0.72, 50, 78) : 50;
-  camera.fov = camGoal === 'replay' ? baseFov * 0.66 : baseFov;
-  camera.updateProjectionMatrix();
+  cam.resize(w, h);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   trail.width = w * dpr; trail.height = h * dpr;
   tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -961,7 +999,7 @@ function tick(dt) {
     const g = keeperSpheres(keeper);
     slow = Math.min(g[5].c.distanceTo(ball.pos), g[6].c.distanceTo(ball.pos)) < 1.4;
   }
-  timeScale = lerp(timeScale, slow ? 0.33 : 1, 1 - Math.exp(-dt * 10));
+  timeScale = lerp(timeScale, slow && !motionReduced ? 0.33 : 1, 1 - Math.exp(-dt * 10));
   const sdt = dt * timeScale;
 
   if (match.phase === 'runup') {
@@ -985,6 +1023,7 @@ function tick(dt) {
       shot.keeper.target = target;
     }
   }
+  updateKeyboard(dt);
   if (!replay) updateKeeper(keeper, sdt, time);
 
   if (ball.moving) {
@@ -1013,10 +1052,11 @@ function tick(dt) {
   updateFireworks(dt);
   updateFlashes(dt);
   updateNet(replay ? dt * 0.5 : sdt);
+  if (motionReduced) { cheer.you = 0; cheer.cpu = 0; }
   cheer.you *= Math.exp(-dt * 0.7); cheer.cpu *= Math.exp(-dt * 0.7);
   updateCrowd(time);
   const boardTex = world.getBoardTex();
-  if (boardTex) boardTex.offset.x = (time * 0.025) % 1;
+  if (boardTex && !motionReduced) boardTex.offset.x = (time * 0.025) % 1;
 
   if (intro) {
     intro.t += dt;
@@ -1028,9 +1068,9 @@ function tick(dt) {
     if (intro.t > 3.6) $('tapToPlay').classList.add('show');
   }
   updateTowers(dt);
-  updateCamera(dt, time);
+  cam.update(dt, time, { intro, flying: match.phase === 'flight' && !!shot, ball: ball.pos, run: post && post.run, reduced: motionReduced });
   // Keeper view: fade what blocks the view and highlight the ball.
-  const keeperView = camGoal === 'keeper' ? 1 : 0;
+  const keeperView = cam.goal === 'keeper' ? 1 : 0;
   goalFade += (keeperView - goalFade) * Math.min(1, dt * 6);
   world.setGoalFade(goalFade);
   ballTracking.update(ball.pos, ball.moving && !replay, 0.45 + 0.55 * keeperView, dt);

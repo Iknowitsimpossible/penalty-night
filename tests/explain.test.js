@@ -36,6 +36,12 @@ describe('explainKick', () => {
     expect(e.advice).toMatch(/Swipe faster/);
   });
 
+  it('uses keyboard words for keyboard kicks', () => {
+    const e = explainKick({ kind: 'over', intent: intent({ aimY: 3, input: 'keyboard' }), ball: { x: 2.5, y: 3 } });
+    expect(e.advice).toMatch(/Lower the target/);
+    expect(explainKick({ kind: 'short', intent: intent({ power: 0, input: 'keyboard' }), ball: { x: 1, y: 0.1 } }).advice).toMatch(/Hold Space longer/);
+  });
+
   it('says too soft for a short shot', () => {
     expect(explainKick({ kind: 'short', intent: intent({ power: 0 }), ball: { x: 1, y: 0.1 } }).advice).toMatch(/faster/);
   });

@@ -21,6 +21,26 @@ export function describeSpot(x, y, view = 'shooter') {
   return view === 'keeper' ? `your ${spot}` : spot;
 }
 
+// The same advice in swipe words or keyboard words.
+const PHRASES = {
+  swipe: {
+    faster: 'Swipe faster',
+    over: 'Shorten your swipe: a long swipe lifts the ball over.',
+    rose: 'It rose late. Shorten your swipe a little.',
+    straighter: 'Swipe straighter: you aimed outside the post.',
+    lessCurl: 'Less curl: the bend carried it wide.',
+    bar: 'Off the bar. Shorten your swipe slightly.',
+  },
+  keyboard: {
+    faster: 'Hold Space longer',
+    over: 'Lower the target: it was above the bar.',
+    rose: 'Hard kicks spread a little. Aim a bit lower or use less power.',
+    straighter: 'Move the target inside the post.',
+    lessCurl: 'Less curl (Z / X): the bend carried it wide.',
+    bar: 'Off the bar. Lower the target slightly.',
+  },
+};
+
 const sameSide = (a, b) => Math.sign(a) === Math.sign(b) && Math.abs(a) > 0.6 && Math.abs(b) > 0.6;
 
 // Your kick.
@@ -38,6 +58,7 @@ export function explainKick({ kind, intent, ball, keeper, style }) {
   const aimed = describeSpot(intent.aimX, intent.aimY);
   let advice;
   const keeperGuessed = keeper && keeper.kind === 'gamble' && keeper.target;
+  const say = PHRASES[intent.input === 'keyboard' ? 'keyboard' : 'swipe'];
 
   if (kind === 'goal') {
     if (keeperGuessed && !sameSide(keeper.target.x, ball.x)) advice = 'The keeper guessed early and went the wrong way.';
@@ -46,19 +67,19 @@ export function explainKick({ kind, intent, ball, keeper, style }) {
   } else if (kind === 'saved') {
     if (keeperGuessed && sameSide(keeper.target.x, ball.x)) advice = 'The keeper guessed your side. Try the other corner or the middle.';
     else if (Math.abs(ball.x) < 1.3) advice = 'Too close to the keeper. Aim nearer a post.';
-    else if (intent.power < 0.45) advice = 'Swipe faster: the keeper had time to react.';
+    else if (intent.power < 0.45) advice = `${say.faster}: the keeper had time to react.`;
     else if (style === 'wall' && ball.y < 0.7) advice = 'This keeper smothers low shots. Lift it.';
     else if (style === 'reader') advice = 'This keeper reads placement. Hit it harder.';
     else if (ball.y > 0.6 && ball.y < 1.6) advice = 'Mid-height shots are easiest to save. Go low or high.';
     else advice = 'Good shot, better save. Keep varying your corners.';
   } else if (kind === 'over') {
-    advice = intent.aimY > GOAL_H ? 'Shorten your swipe: a long swipe lifts the ball over.' : 'It rose late. Shorten your swipe a little.';
+    advice = intent.aimY > GOAL_H ? say.over : say.rose;
   } else if (kind === 'wide') {
-    advice = Math.abs(intent.aimX) > HALF ? 'Swipe straighter: you aimed outside the post.' : 'Less curl: the bend carried it wide.';
+    advice = Math.abs(intent.aimX) > HALF ? say.straighter : Math.abs(intent.curl) > 0.3 ? say.lessCurl : 'Just wide. Aim a touch further inside.';
   } else if (kind === 'post') {
-    advice = ball.y > GOAL_H - 0.25 ? 'Off the bar. Shorten your swipe slightly.' : 'So close. Aim a touch inside the post.';
+    advice = ball.y > GOAL_H - 0.25 ? say.bar : 'So close. Aim a touch inside the post.';
   } else {
-    advice = 'Swipe faster: it ran out of pace.';
+    advice = `${say.faster}: it ran out of pace.`;
   }
   return { title: TITLES[kind], detail: `You aimed ${aimed}.`, advice, marks, view: 'shooter' };
 }
