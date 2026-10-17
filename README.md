@@ -56,10 +56,15 @@ Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
 - `npm test` covers swipe reading, physics and collisions, CPU decisions,
   shootout and cup rules, feedback text, practice lessons, settings,
   keyboard aim and adaptive resolution, plus acceptance tests showing a
-  keeper who follows each training stage's instructions saves reliably.
+  keeper who follows each training stage's instructions saves reliably,
+  and that every save or goal matches the keeper's actual body.
 - `npm run balance [kicks]` plays thousands of kicks with the real physics,
   keeper body and AI and prints scoring rates per level and style. Use it
   after changing `src/ai/levels.js` or the keeper's dive.
 - In development, `window.__pn` steps the game at a fixed rate for exact,
   repeatable browser checks: `__pn.freeze()`, `__pn.seed(1)`,
   `__pn.step(1.5)`, `__pn.state`, `__pn.bench()`. It is not in production builds.
+- In development, press **C** for the collision debug view: the keeper's
+  collision spheres, the posts and bar, and the ball as wireframes. While
+  it is on, the game freezes the first time a kick touches the frame or the
+  keeper and marks the contact (red); any key or click carries on.

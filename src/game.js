@@ -106,9 +106,10 @@ function launch(target, T, spin) {
 // ------------------------------------------------------------------ collisions (physics/collisions.js)
 function collide() {
   if (!shot) return;
-  collideStep(ball, shot, keeper.active ? keeperSpheres(keeper) : null, rng, {
-    post: () => { sfx.post(); cam.shake(0.06); },
-    save: () => { sfx.save(); cam.shake(0.035); },
+  const spheres = keeper.active ? keeperSpheres(keeper) : null;
+  collideStep(ball, shot, spheres, rng, {
+    post: () => { sfx.post(); cam.shake(0.06); if (debugView) debugView.contact('frame', shot, ball.pos, spheres); },
+    save: () => { sfx.save(); cam.shake(0.035); if (debugView) debugView.contact('keeper', shot, ball.pos, spheres); },
     net: (p, v, strength) => { bulgeNet(p, v, strength); sfx.net(); cam.shake(0.02); },
   });
 }
@@ -1036,6 +1037,7 @@ resize();
 // ------------------------------------------------------------------ main loop
 let last = performance.now(), time = 0, timeScale = 1;
 let devFrozen = false;   // development only: stop real time so tests can step exactly
+let debugView = null;    // development only: the collision debug view (C)
 // Advance the whole game by dt seconds. Rendering happens separately, so
 // tests can step the game at a fixed rate without a screen refresh.
 function tick(dt) {
@@ -1136,7 +1138,8 @@ const quality = createQualityGovernor(Math.min(window.devicePixelRatio || 1, 2))
 let pausedFrames = 0;
 function frame(now) {
   const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
-  if (!paused && !devFrozen) tick(dt);
+  if (!paused && !devFrozen && !(debugView && debugView.halted)) tick(dt);
+  if (debugView) debugView.update(keeper.active && keeper.body.root.visible ? keeperSpheres(keeper) : null, ball.pos);
   // While paused the picture is still: draw a couple of frames, then rest.
   pausedFrames = paused ? pausedFrames + 1 : 0;
   if (pausedFrames < 3) {
@@ -1153,6 +1156,18 @@ function frame(now) {
 // Development-only handle for reproducible browser checks: step the game by
 // exact amounts and read its state. Vite strips this from production builds.
 if (import.meta.env.DEV) {
+  // C shows the collision shapes; while it is on, the game freezes on the
+  // first frame and keeper contact of each kick. Any key or click resumes
+  // (and is swallowed, so it does not also shoot or dive).
+  import('./render/collision-debug.js').then(({ createCollisionDebug }) => { debugView = createCollisionDebug(scene); });
+  window.addEventListener('keydown', (e) => {
+    if (!debugView) return;
+    if (debugView.halted) { e.preventDefault(); e.stopImmediatePropagation(); debugView.resume(); return; }
+    if (e.key.toLowerCase() === 'c' && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); debugView.toggle(); }
+  }, true);
+  window.addEventListener('pointerdown', (e) => {
+    if (debugView && debugView.halted) { e.preventDefault(); e.stopImmediatePropagation(); debugView.resume(); }
+  }, true);
   window.__pn = {
     step(seconds, dt = 1 / 60) {
       for (let t = 0; t < seconds; t += dt) tick(dt);
@@ -1177,6 +1192,8 @@ if (import.meta.env.DEV) {
     get plan() { return match.plan && { ...match.plan }; },
     get training() { return trainingStage && { ...trainingStage }; },
     get homeX() { return keeper.homeX; },
+    get debug() { return debugView && { on: debugView.on, halted: debugView.halted }; },
+    toggleDebug: () => debugView && debugView.toggle(),
     get camera() { return { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: +camera.fov.toFixed(1), near: +camera.near.toFixed(2), aspect: +camera.aspect.toFixed(2), goal: cam.goal }; },
     get state() {
       return {
