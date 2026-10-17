@@ -111,7 +111,7 @@ export function explainSave({ kind, shot, dive, switched, flight, style }) {
     else if (dive.early) advice = `Too early. Wait for the gold bar (${COMMIT.toFixed(1)} s into the run-up).`;
     else if (late) advice = 'Too late: dive as soon as they strike.';
     else if (!sameSide(dive.x, shot.x) && Math.abs(shot.x) > 0.8) {
-      advice = st.taker.side ? `Wrong way. ${st.label} takers favour your ${st.taker.side < 0 ? 'right' : 'left'}.` : 'Wrong way. Check the scouting tip for their habits.';
+      advice = st.taker.side ? `Wrong way. ${st.label} takers favour your ${st.taker.side < 0 ? 'right' : 'left'}.` : 'Wrong way. After the gold bar, wait for the strike and dive toward the ball.';
     } else if (Math.abs(dive.y - shot.y) > 0.9) advice = shot.y > dive.y ? 'Right side. Dive higher: tap nearer the bar.' : 'Right side. Dive lower: tap nearer the ground.';
     else advice = 'Right idea, but it was tucked in the corner.';
   }

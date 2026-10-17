@@ -18,6 +18,7 @@ import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
 import { keeperPlan, readDive } from './ai/keeper.js';
 import { STYLE_KEYS, styleOf } from './ai/styles.js';
+import { LEVELS } from './ai/levels.js';
 import { explainKick, explainSave } from './feedback/explain.js';
 import { LESSONS, checkLesson } from './practice/lessons.js';
 import { createFeedbackCard } from './ui/feedback-card.js';
@@ -42,15 +43,6 @@ const storage = (() => {
 const settings = loadSettings(storage);
 const motionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 let motionReduced = false;
-
-const LEVELS = {
-  amateur: { note: 'Slow keeper who guesses a lot. Their takers miss often.',
-    react: 0.30, err: 0.85, shift: 1.45, gamble: 0.24, readSpin: 0, cpuErr: 0.62, reAim: 0.25 },
-  pro: { note: 'Quick keeper who reads straight shots. Their takers are steady.',
-    react: 0.21, err: 0.55, shift: 1.7, gamble: 0.2, readSpin: 0.5, cpuErr: 0.42, reAim: 0.5 },
-  legend: { note: 'Reads curve and punishes slow kicks. Takers rarely miss.',
-    react: 0.14, err: 0.32, shift: 1.95, gamble: 0.12, readSpin: 1, cpuErr: 0.3, reAim: 0.75 },
-};
 
 // ------------------------------------------------------------------ stadium (render/world.js)
 const stage = $('stage');
@@ -884,7 +876,7 @@ function tick(dt) {
     if (keeper.pending.at <= 0) {
       const pd = keeper.pending; keeper.pending = null;
       const target = pd.kind === 'read' ? readDive(predictCrossing(ball, pd.readSpin), level, match.opp.style, rng) : { x: pd.x, y: pd.y };
-      planDive(keeper, target.x, target.y);
+      planDive(keeper, target.x, target.y, target.speed);
       shot.keeper.target = target;
     }
   }

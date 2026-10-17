@@ -27,5 +27,7 @@ export function readDive(predicted, skill, styleKey, rng) {
   return {
     x: predicted.x + rng.gauss() * err,
     y: clamp(predicted.y + rng.gauss() * err * 0.6, 0, 2.8),
+    // A keeper strong at low shots also gets down to them faster.
+    speed: predicted.y < 0.6 && k.lowSafe ? 1 - 0.35 * k.lowSafe : 1,
   };
 }

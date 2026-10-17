@@ -58,12 +58,15 @@ export function newKeeper(body) {
   return { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8 };
 }
 const READY = 2.35;           // shoulder angle with arms out and down
+const REACHING = 0.08;
+// Dive time: a base plus extra per metre of sideways travel (seconds).
+export const DIVE_BASE = 0.4, DIVE_PER_M = 0.04;        // arms almost parallel, both hands toward the ball
 export function poseKeeper(k) {
   const b = k.body;
   b.root.position.set(k.x, k.y, k.z);
   b.root.rotation.set(0, 0, -k.tilt);
-  b.shoulders[0].rotation.z = lerp(READY, 0.25, k.arms);
-  b.shoulders[1].rotation.z = -lerp(READY, 0.25, k.arms);
+  b.shoulders[0].rotation.z = lerp(READY, REACHING, k.arms);
+  b.shoulders[1].rotation.z = -lerp(READY, REACHING, k.arms);
   b.hips[0].rotation.z = -0.12 * (1 - k.arms * 0.5);
   b.hips[1].rotation.z = 0.12 * (1 - k.arms * 0.5);
   b.root.updateMatrixWorld(true);
@@ -72,7 +75,8 @@ export function hideKeeper(body) { body.root.visible = false; }
 
 // Plan a dive so the gloves arrive at (tx, ty). The whole body tilts
 // around the feet, like a real keeper pushing off one leg.
-export function planDive(k, tx, ty) {
+// speed: below 1 dives faster (a keeper strong in that area).
+export function planDive(k, tx, ty, speed = 1) {
   const side = Math.sign(tx - k.x) || 1;
   const lateral = Math.abs(tx - k.x);
   let tilt, toX, toY;
@@ -88,7 +92,7 @@ export function planDive(k, tx, ty) {
   }
   const shift = toX - k.x;
   if (Math.abs(shift) > k.maxShift) toX = k.x + Math.sign(shift) * k.maxShift;
-  k.dive = { t: 0, dur: 0.38 + 0.08 * Math.min(lateral, 3) / 3, fromX: k.x, fromY: k.y, fromTilt: k.tilt, toX, toY, tilt, side, landed: false };
+  k.dive = { t: 0, dur: (DIVE_BASE + DIVE_PER_M * Math.min(lateral, 3)) * speed, fromX: k.x, fromY: k.y, fromTilt: k.tilt, toX, toY, tilt, side, landed: false };
 }
 export function updateKeeper(k, dt, time) {
   if (!k.active) return;
@@ -112,7 +116,9 @@ export function updateKeeper(k, dt, time) {
   } else {
     d.t += dt;
     const p = Math.min(d.t / d.dur, 1);
-    const e = 1 - Math.pow(1 - p, 3);
+    // Smoothstep: a push-off, a fast middle, then full stretch. (An ease-out
+    // here made keepers cover most of the distance in a fraction of a second.)
+    const e = p * p * (3 - 2 * p);
     k.x = lerp(d.fromX, d.toX, e);
     k.tilt = lerp(d.fromTilt, d.tilt, e);
     k.y = lerp(d.fromY, d.toY, e) + Math.sin(p * Math.PI) * (Math.abs(d.tilt) > 0.5 ? 0.22 : 0.1);
@@ -125,14 +131,23 @@ export function updateKeeper(k, dt, time) {
   }
   poseKeeper(k);
 }
-// Spheres that stand in for the keeper's body and gloves, for collisions.
-const _v = new THREE.Vector3();
+// Spheres that stand in for the keeper for collisions: five along the body,
+// the two gloves (indices 5 and 6), one between the hands, and one on each
+// forearm, so a ball cannot slip through the gap between reaching arms.
 const bodyPoints = [[0, 0.3, 0.17], [0, 0.7, 0.19], [0, 1.1, 0.21], [0, 1.42, 0.2], [0, 1.68, 0.14]];
-const spheres = Array.from({ length: 7 }, () => ({ c: new THREE.Vector3(), r: 0 }));
+const spheres = Array.from({ length: 10 }, () => ({ c: new THREE.Vector3(), r: 0 }));
+const _shoulder = new THREE.Vector3();
 export function keeperSpheres(k) {
   const root = k.body.root;
   bodyPoints.forEach(([x, y, r], i) => { spheres[i].c.set(x, y, 0); root.localToWorld(spheres[i].c); spheres[i].r = r; });
   k.body.gloves.forEach((g, i) => { g.getWorldPosition(spheres[5 + i].c); spheres[5 + i].r = 0.14; });
+  spheres[7].c.addVectors(spheres[5].c, spheres[6].c).multiplyScalar(0.5);
+  spheres[7].r = 0.13;
+  k.body.shoulders.forEach((sh, i) => {
+    sh.getWorldPosition(_shoulder);
+    spheres[8 + i].c.lerpVectors(_shoulder, spheres[5 + i].c, 0.65);
+    spheres[8 + i].r = 0.08;
+  });
   return spheres;
 }
 

@@ -9,7 +9,7 @@ import { HALF, GOAL_H, R } from '../core/constants.js';
 import { clamp } from '../core/math.js';
 import { styleOf } from './styles.js';
 
-// skill: { cpuErr, reAim } from the difficulty level.
+// skill: { cpuErr, reAim, cpuPace } from the difficulty level.
 export function planShot(styleKey, rng) {
   const t = styleOf(styleKey).taker;
   if (rng.chance(t.middle ?? 0.1)) {
@@ -43,6 +43,6 @@ export function executeShot(plan, styleKey, skill, rng) {
   let x = plan.x + rng.gauss() * skill.cpuErr;
   let y = plan.y + rng.gauss() * skill.cpuErr * 0.8;
   if (t.over && rng.chance(t.over)) y = GOAL_H + rng.range(0.2, 0.9);
-  const T = clamp(rng.range(0.55, 0.8) - (t.power ?? 0), 0.45, 0.9);
+  const T = clamp(rng.range(0.55, 0.8) - (t.power ?? 0) - (skill.cpuPace ?? 0), 0.42, 0.9);
   return { target: { x, y: Math.max(R, y) }, T, spin: rng.range(-10, 10), onTarget: Math.abs(x) < HALF && y < GOAL_H };
 }
