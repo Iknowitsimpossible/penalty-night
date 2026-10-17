@@ -368,3 +368,9 @@ kbd { font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--l
 .practice-panel .dots { margin-top: 4px; }
 .practice-panel .dots li.now { border-color: var(--cpu); box-shadow: 0 0 6px rgba(47, 198, 180, 0.6); }
 @media (max-width: 520px) { .practice-panel { width: auto; left: 64px; right: 12px; margin: 0; } }
+
+/* Phones: the hint sits left of the sound button, and the bars and card sit above both. */
+@media (max-width: 520px) {
+  #hint { left: 16px; right: 116px; transform: none; max-width: none; width: fit-content; border-radius: 14px; text-align: left; }
+  #diveMeter, #powerMeter, #feedback { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+}
