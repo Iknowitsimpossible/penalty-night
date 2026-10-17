@@ -6,7 +6,7 @@
 // keeper motion -> ball step with collisions -> judge.
 import * as THREE from 'three';
 import { createBallState, launchVelocity, stepBall } from '../physics/ball.js';
-import { newShot, collideStep, judge } from '../physics/collisions.js';
+import { newShot, coolDown, collideStep, judge } from '../physics/collisions.js';
 import { makePerson, KITS, newKeeper, poseKeeper, planDive, updateKeeper, keeperSpheres } from '../render/people.js';
 
 const H = 1 / 240;
@@ -38,7 +38,7 @@ export function playKick(target, T, spin, keeperAct, rng, opts = {}) {
     keeperAct(time, keeper, ball);
     updateKeeper(keeper, H, time);
     stepBall(ball, H);
-    shot.cool -= H;
+    coolDown(shot, H);
     collideStep(ball, shot, keeperSpheres(keeper), rng);
     shot.t += H;
     const kind = judge(shot, ball);

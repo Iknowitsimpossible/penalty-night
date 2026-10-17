@@ -9,7 +9,7 @@ import { createWorld } from './render/world.js';
 import { createEffects, GOLD } from './render/effects.js';
 import { makePerson, KITS, animateRunup, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './render/people.js';
 import { createBallState, launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
-import { newShot, collideStep, judge } from './physics/collisions.js';
+import { newShot, coolDown, collideStep, judge } from './physics/collisions.js';
 import { createBallMesh, createBallTracking } from './render/ball.js';
 import { createCameraDirector } from './render/camera.js';
 import { createReplays } from './render/replay.js';
@@ -1086,7 +1086,7 @@ function tick(dt) {
     const h = sdt / steps;
     for (let i = 0; i < steps; i++) {
       stepBall(ball, h);
-      if (shot) shot.cool -= h;
+      if (shot) coolDown(shot, h);
       collide();
     }
     ball.mesh.position.copy(ball.pos);

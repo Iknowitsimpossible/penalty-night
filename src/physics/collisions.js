@@ -10,7 +10,7 @@ import { clamp } from '../core/math.js';
 export function newShot(ball) {
   return {
     t: 0, touched: false, post: false, goal: false, crossed: false, outside: null,
-    prevZ: ball.pos.z, cool: 0, done: false,
+    prevZ: ball.pos.z, cool: 0, keeperCool: 0, done: false,
     lineAt: null, touchAt: null, postAt: null,
   };
 }
@@ -27,8 +27,12 @@ function bounceOff(ball, cp, radius, restitution) {
   return true;
 }
 
-// One collision pass after each physics step. The caller counts shot.cool
-// down by the step length (a short pause between repeated hits).
+// Short pauses between repeated hits, so one contact makes one sound and one
+// deflection. The frame and the keeper have separate pauses: a ball coming
+// off the post can still hit the keeper straight away. Call once per step.
+export function coolDown(shot, h) { shot.cool -= h; shot.keeperCool -= h; }
+
+// One collision pass after each physics step (call coolDown() first).
 // keeperSpheres: [{ c: Vector3, r }] for the keeper's body and gloves, or null.
 // on: { post(), save(), net(pos, vel, strength) }
 export function collideStep(ball, shot, keeperSpheres, rng, on = {}) {
@@ -44,14 +48,17 @@ export function collideStep(ball, shot, keeperSpheres, rng, on = {}) {
   }
   if (bounceOff(ball, _cp.set(clamp(p.x, -PX, PX), BAR_Y, 0), POST_R, 0.6)) hitFrame();
 
-  if (keeperSpheres && shot.cool <= 0 && p.z < 1.6 && p.z > -0.4) {
+  // The keeper always stops the ball (like the posts above); only the
+  // deflection and the sound wait for the keeper's own pause.
+  if (keeperSpheres && p.z < 1.6 && p.z > -0.4) {
     for (const s of keeperSpheres) {
       if (bounceOff(ball, s.c, s.r, 0.3)) {
+        if (shot.keeperCool > 0) break;
         ball.vel.z = Math.max(ball.vel.z, rng.range(1.5, 4));
         ball.vel.x += rng.range(-1.5, 1.5);
         ball.spin *= 0.2;
         if (!shot.touchAt) shot.touchAt = { x: p.x, y: p.y };
-        shot.touched = true; shot.cool = 0.1;
+        shot.touched = true; shot.keeperCool = 0.1;
         if (on.save) on.save();
         break;
       }

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { createBallState, launchVelocity, stepBall } from '../src/physics/ball.js';
-import { newShot, collideStep, judge } from '../src/physics/collisions.js';
+import { newShot, coolDown, collideStep, judge } from '../src/physics/collisions.js';
 import { createRng } from '../src/core/random.js';
-import { HALF, GOAL_H, PX, BAR_Y } from '../src/core/constants.js';
+import { HALF, GOAL_H, PX, BAR_Y, POST_R, R } from '../src/core/constants.js';
 
 // Play one kick to its result with the same fixed-step loop the game uses.
 function play(target, T, spin = 0, keeperSpheres = null) {
@@ -16,7 +16,7 @@ function play(target, T, spin = 0, keeperSpheres = null) {
   const h = 1 / 240;
   for (let i = 0; i < 240 * 5; i++) {
     stepBall(ball, h);
-    shot.cool -= h;
+    coolDown(shot, h);
     collideStep(ball, shot, keeperSpheres, rng, { post: () => events.push('post'), save: () => events.push('save'), net: () => events.push('net') });
     shot.t += h;
     const kind = judge(shot, ball);
@@ -59,5 +59,30 @@ describe('judging a kick', () => {
   it('the same keeper does nothing to a shot in the other corner', () => {
     const body = [{ c: new THREE.Vector3(2.4, 1.0, 0.35), r: 0.3 }];
     expect(play({ x: -2.6, y: 0.5 }, 0.6, 0, body).kind).toBe('goal');
+  });
+
+  it('a ball coming off the post still bounces off a keeper right behind it', () => {
+    // Just in front of the right post, heading into it. The post sends it
+    // back out, straight into a glove 30 cm away, inside the post's pause.
+    const ball = createBallState();
+    ball.pos.set(PX, 1.0, R + POST_R - 0.01);
+    ball.vel.set(0, 0, -12);
+    const glove = { c: new THREE.Vector3(PX, 1.0, 0.45), r: 0.14 };
+    const shot = newShot(ball);
+    const rng = createRng(1);
+    const events = [];
+    const h = 1 / 240;
+    let maxZ = ball.pos.z;
+    for (let i = 0; i < 60; i++) {
+      stepBall(ball, h);
+      coolDown(shot, h);
+      collideStep(ball, shot, [glove], rng, { post: () => events.push('post'), save: () => events.push('save') });
+      maxZ = Math.max(maxZ, ball.pos.z);
+    }
+    expect(events[0]).toBe('post');
+    expect(events).toContain('save');
+    expect(shot.touched).toBe(true);
+    // never inside the glove
+    expect(maxZ).toBeLessThan(glove.c.z - glove.r - R + 0.001);
   });
 });
