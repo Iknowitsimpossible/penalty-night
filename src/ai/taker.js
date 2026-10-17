@@ -23,10 +23,18 @@ export function planShot(styleKey, rng) {
 }
 
 // Called once, at the plant foot. dive: the keeper's dive target if they
-// have already gone ({ x }), or null. Returns the (possibly switched) plan.
-export function reconsider(plan, dive, styleKey, skill, rng) {
-  if (!dive) return plan;
+// have already gone ({ x }), or null. lean: how far the keeper has stepped
+// off-centre (m, world x). A lean is a weaker tell than an early dive: the
+// taker only reacts when it is toward their planned side.
+// Returns the (possibly switched) plan.
+export function reconsider(plan, dive, styleKey, skill, rng, lean = 0) {
   const t = styleOf(styleKey).taker;
+  if (!dive) {
+    if (Math.abs(lean) < 0.3 || plan.middle || Math.sign(lean) !== plan.side) return plan;
+    const pl = clamp(skill.reAim * (t.switch ?? 1) * 0.45 * Math.min(Math.abs(lean), 1), 0, 0.6);
+    if (!rng.chance(pl)) return plan;
+    return { ...plan, side: -plan.side, x: -plan.side * rng.range(1.8, 3.2), switched: true };
+  }
   const p = clamp(skill.reAim * (t.switch ?? 1), 0, 0.95);
   if (!rng.chance(p)) return plan;
   const away = -(Math.sign(dive.x) || 1);
@@ -43,6 +51,7 @@ export function executeShot(plan, styleKey, skill, rng) {
   let x = plan.x + rng.gauss() * skill.cpuErr;
   let y = plan.y + rng.gauss() * skill.cpuErr * 0.8;
   if (t.over && rng.chance(t.over)) y = GOAL_H + rng.range(0.2, 0.9);
-  const T = clamp(rng.range(0.55, 0.8) - (t.power ?? 0) - (skill.cpuPace ?? 0), 0.42, 0.9);
+  // plan.T fixes the flight time (training drills); otherwise style and level set it.
+  const T = plan.T ?? clamp(rng.range(0.55, 0.8) - (t.power ?? 0) - (skill.cpuPace ?? 0), 0.42, 0.9);
   return { target: { x, y: Math.max(R, y) }, T, spin: rng.range(-10, 10), onTarget: Math.abs(x) < HALF && y < GOAL_H };
 }

@@ -5,6 +5,7 @@ import { clamp } from '../core/math.js';
 import { keyboardKick } from './swipe.js';
 
 const ARROWS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+const STEP_KEYS = ['a', 'd'];
 export const CHARGE_TIME = 0.9;   // seconds of holding Space for full power
 
 // mode(): 'shoot' | 'keep' | null (what the keys can do right now)
@@ -29,6 +30,7 @@ export function createKeyboardAim({ mode, on }) {
     // Returns true when the key was used.
     keydown(e, k) {
       const m = mode();
+      if (STEP_KEYS.includes(k)) { kb.held.add(k); return true; }
       if (ARROWS.includes(k)) { kb.held.add(k); kb.active = true; e.preventDefault(); return true; }
       if (k === ' ' && m === 'shoot') {
         e.preventDefault(); kb.active = true;
@@ -44,11 +46,14 @@ export function createKeyboardAim({ mode, on }) {
     },
     keyup(e) {
       kb.held.delete(e.key);
+      kb.held.delete(e.key.toLowerCase());
       if (e.key === ' ' && kb.charging) {
         e.preventDefault();
         if (mode() === 'shoot') shootNow(); else kb.charging = false;
       }
     },
+    // Keeper stepping: -1 (A, screen left), 0, or 1 (D, screen right).
+    stepDir: () => (kb.held.has('d') ? 1 : 0) - (kb.held.has('a') ? 1 : 0),
     update(dt) {
       const m = mode();
       if (m) {

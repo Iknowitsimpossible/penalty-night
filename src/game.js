@@ -22,6 +22,7 @@ import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { LEVELS } from './ai/levels.js';
 import { explainKick, explainSave } from './feedback/explain.js';
 import { LESSONS, checkLesson } from './practice/lessons.js';
+import { STAGES, startStage, drillPlan, recordAttempt, SHOTS_PER_STAGE } from './practice/keeper-drills.js';
 import { createFeedbackCard } from './ui/feedback-card.js';
 import { createSettingsPanel } from './ui/settings-panel.js';
 import { hubView } from './ui/cup-hub.js';
@@ -167,7 +168,7 @@ function startMatch(o) {
   $('hub').hidden = true;
   party = false; post = null; replays.clear(); endReplayLook();
   match.you = []; match.cpu = [];
-  const practicing = o.mode === 'practice';
+  const practicing = o.mode === 'practice' || o.mode === 'keeper';
   $('menu').hidden = true; $('end').hidden = true; $('practiceDone').hidden = true;
   $('hud').hidden = practicing; $('practice').hidden = !practicing; $('pauseBtn').hidden = false;
   if (!practicing) showScout(o, 6);
@@ -176,6 +177,7 @@ function startMatch(o) {
 }
 
 function nextTurn() {
+  if (match.mode === 'keeper') return trainingStage.done ? finishTraining() : setupCpuKick();
   if (match.mode === 'practice') {
     if (practice.step >= LESSONS.length) return finishPractice();
     renderPractice();
@@ -222,9 +224,11 @@ function renderDiveMeter() {
 }
 
 function setupCpuKick() {
-  match.turn = 'cpu'; match.phase = 'runup'; match.timer = 0; shot = null;
+  const training = match.mode === 'keeper';
+  match.turn = 'cpu'; match.phase = training ? 'ready' : 'runup'; match.timer = 0; shot = null;
   lineUp();
-  match.plan = planShot(match.opp.style, rng); match.dive = null; match.committed = false;
+  match.plan = training ? drillPlan(trainingStage, rng) : planShot(match.opp.style, rng);
+  match.dive = null; match.committed = false;
   keys.reset(1.0);
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
@@ -233,12 +237,18 @@ function setupCpuKick() {
   animateRunup(taker, 0);
   startRecording(false);
   cam.goal = 'keeper';
-  if (match.mode === 'practice') {
+  if (training) {
+    renderTraining();
+    hint('');
+    $('readyBtn').hidden = false;
+    // Stage 1 shows where the shot is going.
+    if (match.plan.shown) { cornerHint.position.set(match.plan.x, match.plan.y, 0.05); cornerHint.visible = true; }
+  } else if (match.mode === 'practice') {
     banner(LESSONS[practice.step].title, `Lesson ${practice.step + 1} of ${LESSONS.length}`, 'info', 1100);
     hint('');
   } else {
     banner('Save it', 'Wait for the gold bar, then tap where to dive', 'info', 1100);
-    hint(kb.active ? 'Arrows to aim, Space to dive.' : 'Tap a spot in the goal to dive there.');
+    hint(kb.active ? 'Arrows to aim, Space to dive, A / D to step.' : 'Tap a spot in the goal to dive there.');
     if (match.cpu.length === 0) showScout(match.opp, 4);
   }
   renderDiveMeter();
@@ -253,11 +263,34 @@ function trySkip() {
   return !!post;
 }
 const canDive = () => match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight') && !keeper.dive && !post;
+// Where a screen point lands in the goal mouth (the keeper's plane), or null.
+function screenToGoal(clientX, clientY) {
+  const r = stage.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const { origin: o, direction: d } = raycaster.ray;
+  if (Math.abs(d.z) < 1e-4) return null;
+  const t = (KEEPER_Z - o.z) / d.z;
+  if (t <= 0) return null;
+  return { x: clamp(o.x + d.x * t, -4.6, 4.6), y: clamp(o.y + d.y * t, 0, 2.9) };
+}
+// Mouse hover while keeping: a ring previews exactly where a click will dive.
+const hover = { x: 0, y: 1, on: false };
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const keeping = match.turn === 'cpu' && (match.phase === 'ready' || match.phase === 'runup' || match.phase === 'flight');
+  const g = keeping ? screenToGoal(e.clientX, e.clientY) : null;
+  hover.on = !!g;
+  if (g) { hover.x = g.x; hover.y = g.y; kb.active = false; }
+});
+canvas.addEventListener('pointerleave', () => { hover.on = false; });
+
 const pointer = createPointerInput({ stage, canvas, trail: $('trail') }, {
   onPress(p, e) {
     initAudio();
     kb.active = false;
     if (trySkip()) return 'done';
+    if (match.phase === 'ready') return 'done';
     if (match.phase === 'aim' && match.turn === 'you') return p.y < stage.clientHeight * 0.3 ? 'done' : 'swipe';
     if (canDive()) playerDive(e);
     return 'done';
@@ -309,14 +342,8 @@ function startShot() {
 // ---------------- their kick: you dive
 const raycaster = new THREE.Raycaster();
 function playerDive(e) {
-  const r = stage.getBoundingClientRect();
-  const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-  raycaster.setFromCamera(ndc, camera);
-  const { origin: o, direction: d } = raycaster.ray;
-  if (Math.abs(d.z) < 1e-4) return;
-  const t = (KEEPER_Z - o.z) / d.z;
-  if (t <= 0) return;
-  diveTo(clamp(o.x + d.x * t, -4.6, 4.6), clamp(o.y + d.y * t, 0, 2.9));
+  const g = screenToGoal(e.clientX, e.clientY);
+  if (g) diveTo(g.x, g.y);
 }
 // Your dive, recorded with its timing: before the plant foot (COMMIT) is
 // early and lets the taker switch; after the strike, timing is measured
@@ -326,6 +353,10 @@ function diveTo(x, y) {
   sfx.dive();
   const at = match.phase === 'runup' ? match.timer : RUNUP + (shot ? shot.t : 0);
   match.dive = { x, y, at, early: at < COMMIT };
+  // Instant confirmation that the dive registered: a pulse where you aimed
+  // (red if it was before the gold bar) and a tiny buzz on phones.
+  pulseDive(x, y, match.dive.early);
+  if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) { /* not allowed */ } }
   hint('');
 }
 
@@ -347,10 +378,12 @@ const LINES = {
 const pick = (a) => a[(Math.random() * a.length) | 0];
 function resolve(kind) {
   shot.done = true; shot.after = 0;
+  $('stepper').hidden = true;
   hud.diveMeter(null);
   const mine = match.turn === 'you';
   const scored = kind === 'goal';
   if (match.mode === 'practice') return resolvePractice(kind, mine);
+  if (match.mode === 'keeper') return resolveTraining(kind);
   (mine ? match.you : match.cpu).push(scored);
   renderHud();
   const missText = { over: 'Over the bar', wide: 'Wide', post: 'Off the post', short: 'Too soft' }[kind];
@@ -556,6 +589,8 @@ function loadRecord() {
 }
 function saveRecord(r) { try { storage.setItem('penaltyNight.record', JSON.stringify(r)); } catch (e) { /* storage unavailable */ } }
 function showPracticeEntry() {
+  const cleared = Math.min(+storage.getItem('penaltyNight.keeperStage') || 0, STAGES.length);
+  $('trainingNote').textContent = cleared ? `${cleared} of ${STAGES.length} stages cleared` : `${STAGES.length} stages · save 3 of 5`;
   const done = practiced();
   $('practiceBadge').hidden = done;
   $('practiceNote').textContent = done ? 'Replay the four lessons any time' : 'Learn shooting and keeping · 4 lessons';
@@ -676,6 +711,10 @@ function renderPractice() {
 const practiced = () => storage.getItem('penaltyNight.practiced') === '1';
 function finishPractice() {
   storage.setItem('penaltyNight.practiced', '1');
+  $('doneEyebrow').textContent = 'Practice complete';
+  $('doneTitle').textContent = "You're ready";
+  $('doneLede').textContent = 'Low, high and curved shots, and a keeper who waits for the plant foot. Every kick after this gets a short card telling you what to change.';
+  $('practiceAgain').textContent = 'Practice again';
   match.phase = 'end';
   $('practice').hidden = true; $('pauseBtn').hidden = true; hud.diveMeter(null);
   hint(''); sfx.whistle(); sfx.roar(true);
@@ -684,8 +723,134 @@ function finishPractice() {
 }
 $('practiceBtn').addEventListener('click', () => { initAudio(); startPractice(); });
 $('practicePlay').addEventListener('click', () => { initAudio(); $('practiceDone').hidden = true; startMatch(quickOpponent()); });
-$('practiceAgain').addEventListener('click', () => { $('practiceDone').hidden = true; startPractice(); });
+$('practiceAgain').addEventListener('click', () => {
+  $('practiceDone').hidden = true;
+  if (match.mode === 'keeper') startTraining(0); else startPractice();
+});
 $('practiceMenu').addEventListener('click', () => { $('practiceDone').hidden = true; match.phase = 'menu'; showPicker(); });
+
+// ---------------- keeper positioning, markers and dive feedback
+// Step along the line (A / D or the on-screen arrows) until the plant foot.
+// Stepping toward a side shows the taker your plan, like an early dive.
+const STEP_SPEED = 2.0, STEP_MAX = 1.0;
+let stepping = 0;                         // -1, 0, 1 from the on-screen buttons (screen direction)
+const canStep = () => !paused && !post && match.turn === 'cpu' && !keeper.dive &&
+  (match.phase === 'ready' || (match.phase === 'runup' && match.timer < COMMIT));
+function updateStepping(dt) {
+  const allowed = canStep();
+  $('stepper').hidden = !allowed;
+  if (!allowed) return;
+  const dir = stepping || keys.stepDir();
+  // facing the taker, screen right is world -x
+  keeper.homeX = clamp(keeper.homeX - dir * STEP_SPEED * dt, -STEP_MAX, STEP_MAX);
+}
+for (const [id, dir] of [['stepLeft', -1], ['stepRight', 1]]) {
+  const b = $(id);
+  const stop = () => { stepping = 0; b.classList.remove('held'); };
+  b.addEventListener('pointerdown', (e) => { e.preventDefault(); initAudio(); stepping = dir; b.classList.add('held'); b.setPointerCapture(e.pointerId); });
+  b.addEventListener('pointerup', stop);
+  b.addEventListener('pointercancel', stop);
+}
+
+const ringTex = (color) => world.canvasTexture(128, 128, (c, w, h) => {
+  c.strokeStyle = color; c.lineWidth = 9;
+  c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 12, 0, Math.PI * 2); c.stroke();
+});
+const makeRing = (tex, size) => {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, fog: false }));
+  sp.scale.set(size, size, 1); sp.visible = false; sp.renderOrder = 11;
+  scene.add(sp);
+  return sp;
+};
+// Stage 1 of keeper training: where the shot is going.
+const cornerHint = makeRing(ringTex('#2fc6b4'), 0.75);
+// The confirmation pulse when a dive registers.
+const pulse = { sprite: makeRing(ringTex('#ffffff'), 0.5), t: 1 };
+function pulseDive(x, y, early) {
+  pulse.sprite.position.set(x, y, KEEPER_Z + 0.08);
+  pulse.sprite.material.color.setHex(early ? 0xef5a5f : 0xf2c230);
+  pulse.t = 0; pulse.sprite.visible = true;
+}
+function updateKeeperMarkers(dt) {
+  if (pulse.sprite.visible) {
+    pulse.t += dt;
+    const k = Math.min(pulse.t / 0.45, 1);
+    pulse.sprite.scale.setScalar(0.45 + 0.9 * k);
+    pulse.sprite.material.opacity = 1 - k;
+    if (k >= 1) pulse.sprite.visible = false;
+  }
+  if (match.turn !== 'cpu' || post) cornerHint.visible = false;
+}
+
+// ---------------- keeper training
+// Five stages that add one difficulty at a time (practice/keeper-drills.js).
+let trainingStage = null;
+function trainingOpponent(stageIndex) {
+  return { mode: 'keeper', name: 'Coach', code: 'PRA', color: 0x2fc6b4, label: '', style: 'balanced',
+    params: { ...LEVELS.pro, cpuErr: 0.08, reAim: STAGES[stageIndex].reAim, cpuPace: 0 } };
+}
+function startTraining(stageIndex = 0) {
+  trainingStage = startStage(stageIndex, rng);
+  startMatch(trainingOpponent(stageIndex));
+}
+function renderTraining() {
+  const st = STAGES[trainingStage.index];
+  $('practiceStep').textContent = `Keeper training · Stage ${trainingStage.index + 1} of ${STAGES.length}`;
+  $('practiceTitle').textContent = st.title;
+  $('practiceHow').textContent = st.how;
+  $('practiceDots').replaceChildren(...Array.from({ length: SHOTS_PER_STAGE }, (_, i) => {
+    const li = document.createElement('li');
+    const r = trainingStage.results[i];
+    li.className = r === undefined ? (i === trainingStage.attempt ? 'now' : '') : r ? 'goal' : 'miss';
+    return li;
+  }));
+}
+// The run-up starts when you are ready.
+function startRunup() {
+  if (match.phase !== 'ready') return;
+  $('readyBtn').hidden = true;
+  match.phase = 'runup'; match.timer = 0;
+  initAudio();
+}
+$('readyBtn').addEventListener('click', startRunup);
+function resolveTraining(kind) {
+  startCelebration(kind, false, kind === 'goal');
+  post.autoReplay = false;
+  post.feedback = explainSave({
+    kind, shot: ballSpot(), dive: match.dive, switched: !!(match.plan && match.plan.switched),
+    flight: shot.cpu ? shot.cpu.T : 0.7, style: 'balanced', precise: true,
+  });
+  if (kind !== 'goal' && kind !== 'saved') {
+    banner('They missed', 'That one does not count', 'info', 1300);
+    return;
+  }
+  const outcome = recordAttempt(trainingStage, kind === 'saved');
+  renderTraining();
+  if (kind === 'saved') { banner('Saved!', `${trainingStage.saves} of 3`, 'good'); sfx.roar(false); }
+  else banner('Goal', `${trainingStage.saves} of 3 saves`, 'bad', 1300);
+  if (outcome === 'passed') {
+    sfx.chime();
+    banner('Stage cleared', STAGES[trainingStage.index].title, 'good', 1800);
+    storage.setItem('penaltyNight.keeperStage', String(Math.max(trainingStage.index + 1, +storage.getItem('penaltyNight.keeperStage') || 0)));
+    trainingStage = trainingStage.index + 1 < STAGES.length ? startStage(trainingStage.index + 1, rng) : { done: true };
+    if (!trainingStage.done) level = trainingOpponent(trainingStage.index).params;
+  } else if (outcome === 'failed') {
+    banner('Not this time', 'The stage starts again', 'bad', 1800);
+    trainingStage = startStage(trainingStage.index, rng);
+  }
+}
+function finishTraining() {
+  match.phase = 'end';
+  $('practice').hidden = true; $('pauseBtn').hidden = true; hud.diveMeter(null);
+  hint(''); sfx.whistle(); sfx.roar(true);
+  $('doneEyebrow').textContent = 'Keeper training complete';
+  $('doneTitle').textContent = 'Safe hands';
+  $('doneLede').textContent = 'You can read a marked corner, react to slow and quicker shots, and use a habit at match pace. Wait for the gold bar, then the strike.';
+  $('practiceAgain').textContent = 'Train again';
+  $('practiceDone').hidden = false;
+  $('practicePlay').focus();
+}
+$('trainingBtn').addEventListener('click', () => { initAudio(); startTraining(0); });
 
 // ---------------- keyboard play (input/keyboard.js)
 const keys = createKeyboardAim({
@@ -708,8 +873,16 @@ marker.scale.set(0.55, 0.55, 1); marker.visible = false; marker.renderOrder = 10
 scene.add(marker);
 function updateKeyboard(dt) {
   const m = keys.update(dt);
-  marker.visible = kb.active && !!m;
-  marker.position.set(kb.x, kb.y, m === 'keep' ? KEEPER_Z + 0.05 : 0);
+  const keepingNow = match.turn === 'cpu' && !keeper.dive && !post &&
+    (match.phase === 'ready' || match.phase === 'runup' || match.phase === 'flight');
+  if (kb.active) {
+    marker.visible = !!m;
+    marker.position.set(kb.x, kb.y, m === 'keep' ? KEEPER_Z + 0.05 : 0);
+  } else {
+    // mouse hover preview of where a click will dive
+    marker.visible = hover.on && keepingNow;
+    marker.position.set(hover.x, hover.y, KEEPER_Z + 0.05);
+  }
   if (match.mode === 'practice' && kb.active !== kb.shownAsKeys && practice.step < LESSONS.length) { kb.shownAsKeys = kb.active; renderPractice(); }
   hud.powerMeter(kb.active && m === 'shoot' ? kb : null);
 }
@@ -717,15 +890,16 @@ document.addEventListener('keyup', (e) => keys.keyup(e));
 
 // ---------------- pause, restart, quit, settings
 let paused = false;
-const inMatch = () => match.phase === 'aim' || match.phase === 'runup' || match.phase === 'flight';
+const inMatch = () => match.phase === 'aim' || match.phase === 'ready' || match.phase === 'runup' || match.phase === 'flight';
 function pause() {
   if (paused || !inMatch()) return;
   paused = true; pointer.cancel(); keys.release();
   audio.suspend();
-  $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : match.mode === 'practice' ? 'Paused · Practice' : 'Paused';
-  $('pauseTitle').textContent = match.mode === 'practice' ? LESSONS[Math.min(practice.step, LESSONS.length - 1)].title : `${goals(match.you)} – ${goals(match.cpu)}`;
-  $('restartBtn').firstChild.textContent = match.mode === 'practice' ? 'Restart practice ' : 'Restart match ';
-  const st = match.opp && match.opp.style && match.mode !== 'practice' ? styleOf(match.opp.style) : null;
+  $('pauseEyebrow').textContent = match.mode === 'cup' ? `Paused · ${match.stageLabel}` : match.mode === 'practice' ? 'Paused · Practice' : match.mode === 'keeper' ? 'Paused · Keeper training' : 'Paused';
+  $('pauseTitle').textContent = match.mode === 'practice' ? LESSONS[Math.min(practice.step, LESSONS.length - 1)].title
+    : match.mode === 'keeper' ? STAGES[trainingStage.done ? STAGES.length - 1 : trainingStage.index].title : `${goals(match.you)} – ${goals(match.cpu)}`;
+  $('restartBtn').firstChild.textContent = match.mode === 'practice' ? 'Restart practice ' : match.mode === 'keeper' ? 'Restart stage ' : 'Restart match ';
+  const st = match.opp && match.opp.style && match.mode !== 'practice' && match.mode !== 'keeper' ? styleOf(match.opp.style) : null;
   $('pauseScout').textContent = st ? `${st.label}: ${st.scout}` : '';
   $('quitBtn').firstChild.textContent = match.mode === 'cup' ? 'Back to cup ' : 'Quit to menu ';
   $('pause').hidden = false;
@@ -741,6 +915,7 @@ function resume() {
 // Clear everything a kick leaves behind, so a restart or quit starts clean.
 function clearPitch() {
   sfx.hush(false);
+  $('readyBtn').hidden = true; $('stepper').hidden = true; cornerHint.visible = false; stepping = 0;
   post = null; replays.clear(); shot = null; party = false;
   pointer.cancel();
   clearTimeout(endTimer);
@@ -754,6 +929,7 @@ function clearPitch() {
 function restartMatch() {
   const o = match.opp;
   if (o.mode === 'practice') practice.step = 0;
+  if (o.mode === 'keeper') { resume(); clearPitch(); return startTraining(trainingStage.done ? 0 : trainingStage.index); }
   resume(); clearPitch();
   startMatch(o);
 }
@@ -805,6 +981,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if ((k === 'Escape' || k === 'p') && inMatch()) { e.preventDefault(); pause(); return; }
+  if (match.phase === 'ready' && (k === ' ' || k === 'Enter')) { e.preventDefault(); startRunup(); return; }
   if (post) {
     if (k === ' ' || k === 'Enter') { e.preventDefault(); trySkip(); }
     else if (k === 'v') { e.preventDefault(); requestReplay(); }
@@ -828,7 +1005,8 @@ function resetScenery() {
   hideKeeper(keepers.you); taker.root.visible = false; striker.root.visible = false;
   keepers.cpu.root.visible = true;
   keeper = newKeeper(keepers.cpu); keeper.active = true; poseKeeper(keeper);
-  marker.visible = false;
+  marker.visible = false; cornerHint.visible = false; pulse.sprite.visible = false;
+  $('readyBtn').hidden = true; $('stepper').hidden = true;
   placeBall();
 }
 function showPicker() {
@@ -878,14 +1056,17 @@ function tick(dt) {
     // The plant foot: the taker's last look at the keeper, then the shot is locked.
     if (!match.committed && match.timer >= COMMIT) {
       match.committed = true;
+      stepping = 0;
       sfx.plant();
       const f = taker.root.position;
       burstConfetti(f.x + 0.15, 0.1, f.z, 0.15, 12, [0x2f6b35, 0x4d8a45, 0x6b5a3a], 2.4);
-      match.plan = reconsider(match.plan, match.dive && match.dive.early ? match.dive : null, match.opp.style, level, rng);
+      match.plan = reconsider(match.plan, match.dive && match.dive.early ? match.dive : null, match.opp.style, level, rng, keeper.homeX);
     }
     if (match.timer >= RUNUP) cpuShoot();
   }
   if (match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight')) renderDiveMeter();
+  updateStepping(dt);
+  updateKeeperMarkers(dt);
 
   if (keeper.pending && shot) {
     keeper.pending.at -= sdt;
@@ -992,6 +1173,11 @@ if (import.meta.env.DEV) {
       return { tick: +(tickMs / n).toFixed(2), render: +(renderMs / n).toFixed(2), calls: info.calls, triangles: info.triangles, dpr: renderer.getPixelRatio() };
     },
     get paused() { return paused; },
+    dive: (x, y) => diveTo(x, y),
+    get plan() { return match.plan && { ...match.plan }; },
+    get training() { return trainingStage && { ...trainingStage }; },
+    get homeX() { return keeper.homeX; },
+    get camera() { return { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: +camera.fov.toFixed(1), near: +camera.near.toFixed(2), aspect: +camera.aspect.toFixed(2), goal: cam.goal }; },
     get state() {
       return {
         phase: match.phase, turn: match.turn, mode: match.mode, you: [...match.you], cpu: [...match.cpu],

@@ -47,6 +47,16 @@ describe('keyboard aim', () => {
     expect(dives).toEqual([{ x: 0, y: 1.2 }]);
   });
 
+  it('A and D report a step direction while held', () => {
+    const { k } = setup('keep');
+    expect(k.stepDir()).toBe(0);
+    k.keydown(ev('d'), 'd'); expect(k.stepDir()).toBe(1);
+    k.keyup(ev('d'));
+    k.keydown(ev('a'), 'a'); expect(k.stepDir()).toBe(-1);
+    k.keyup(ev('A'));                     // released with Shift held still clears it
+    expect(k.stepDir()).toBe(0);
+  });
+
   it('does nothing with Space when no kick is live', () => {
     const { k, shots, dives } = setup(null);
     expect(k.keydown(ev(' '), ' ')).toBe(false);

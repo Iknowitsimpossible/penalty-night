@@ -36,6 +36,13 @@
     <ol class="dots" id="practiceDots"></ol>
   </header>
 
+  <div id="stepper" hidden>
+    <button type="button" id="stepLeft" aria-label="Step left (A)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4L6.5 10l6 6"/></svg></button>
+    <span class="step-label">Step</span>
+    <button type="button" id="stepRight" aria-label="Step right (D)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4l6 6-6 6"/></svg></button>
+  </div>
+  <button class="go" id="readyBtn" type="button" hidden>I'm ready <kbd>Space</kbd></button>
+
   <div id="diveMeter" hidden aria-hidden="true">
     <span class="dm-label" id="diveLabel">Wait</span>
     <div class="dm-track"><i class="dm-fill"></i><b class="dm-commit"></b></div>
@@ -91,11 +98,17 @@
           <span class="go-arrow" aria-hidden="true">›</span>
         </button>
       </div>
-      <button class="practice-btn" id="practiceBtn" type="button">
-        <b>Practice</b>
-        <small id="practiceNote">Learn shooting and keeping · 4 lessons</small>
-        <span class="badge" id="practiceBadge">New? Start here</span>
-      </button>
+      <div class="train-row">
+        <button class="practice-btn" id="practiceBtn" type="button">
+          <b>Practice</b>
+          <small id="practiceNote">Learn shooting and keeping · 4 lessons</small>
+          <span class="badge" id="practiceBadge">New? Start here</span>
+        </button>
+        <button class="practice-btn keeper" id="trainingBtn" type="button">
+          <b>Keeper training</b>
+          <small id="trainingNote">5 stages · save 3 of 5</small>
+        </button>
+      </div>
     </div>
     <p class="corner" id="record"></p>
     <button class="corner-btn" id="settingsBtn" type="button" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg></button>
@@ -134,9 +147,9 @@
 
   <section class="overlay" id="practiceDone" hidden>
     <div class="card">
-      <p class="eyebrow">Practice complete</p>
-      <h1>You're ready</h1>
-      <p class="lede">Low, high and curved shots, and a keeper who waits for the plant foot. Every kick after this gets a short card telling you what to change.</p>
+      <p class="eyebrow" id="doneEyebrow">Practice complete</p>
+      <h1 id="doneTitle">You're ready</h1>
+      <p class="lede" id="doneLede">Low, high and curved shots, and a keeper who waits for the plant foot. Every kick after this gets a short card telling you what to change.</p>
       <button class="go" id="practicePlay" type="button">Play a quick match</button>
       <div class="row">
         <button class="ghost" id="practiceAgain" type="button">Practice again</button>
@@ -163,6 +176,7 @@
           <dt>Hold Space</dt><dd>Fill power, release to shoot</dd>
           <dt>Z / X</dt><dd>Curl left / right</dd>
           <dt>Space</dt><dd>Dive to the target when keeping</dd>
+          <dt>A / D</dt><dd>Step along the line before the plant foot</dd>
           <dt>V</dt><dd>Replay the last kick</dd>
           <dt>P / Esc</dt><dd>Pause</dd>
         </dl>

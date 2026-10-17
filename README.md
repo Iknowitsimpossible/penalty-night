@@ -2,7 +2,8 @@
 
 A floodlit penalty shootout in the browser, built with three.js and Vite.
 Take penalties with a swipe (or the keyboard), then dive to save theirs.
-Quick matches, an eight-team cup, and a practice mode that teaches both roles.
+Quick matches, an eight-team cup, a practice mode that teaches both roles,
+and a five-stage keeper training mode.
 
 ## Run it
 
@@ -21,7 +22,8 @@ npm run balance    # headless balance report (see below)
 | Aim | Swipe up from the ball: angle = direction, length = height | Arrows move the target |
 | Power | How fast you swipe (holding still does not count) | Hold Space, release to shoot |
 | Curl | Bend the swipe; the ball follows the curve | Z / X |
-| Dive | Tap a spot in the goal | Arrows, then Space |
+| Dive | Tap a spot in the goal (a ring previews it under the mouse) | Arrows, then Space |
+| Step (keeping) | Hold ◀ ▶ until the plant foot | A / D |
 | Pause | ⏸ button | P or Esc (R restart, Q quit, S settings) |
 | Replay | Replay button on the result card | V |
 
@@ -41,8 +43,9 @@ Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
 | `ai/` | CPU keeper and taker decisions, difficulty levels, playing styles |
 | `rules/` | Shootout rules shared by played and simulated matches |
 | `tournament/` | The Night Cup: groups, tables, qualification, knockouts |
-| `practice/` | The four practice lessons and what counts as a valid attempt |
+| `practice/` | The practice lessons and keeper training drills, and what counts as a valid attempt |
 | `feedback/` | The plain-words explanation and advice after each kick |
+| `sim/` | A headless kick (real physics, keeper body, collisions) for balance reports and acceptance tests |
 | `render/` | Stadium, people, ball, effects, camera, replays, adaptive resolution |
 | `ui/` | HUD, result card, cup hub, settings |
 | `audio/` | Synthesized sound (nothing to download) |
@@ -52,7 +55,8 @@ Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
 
 - `npm test` covers swipe reading, physics and collisions, CPU decisions,
   shootout and cup rules, feedback text, practice lessons, settings,
-  keyboard aim and adaptive resolution.
+  keyboard aim and adaptive resolution, plus acceptance tests showing a
+  keeper who follows each training stage's instructions saves reliably.
 - `npm run balance [kicks]` plays thousands of kicks with the real physics,
   keeper body and AI and prints scoring rates per level and style. Use it
   after changing `src/ai/levels.js` or the keeper's dive.

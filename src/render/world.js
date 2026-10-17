@@ -287,7 +287,7 @@ export function createWorld(canvas) {
   function setGoalFade(f) {
     netMat.opacity = 0.5 - 0.38 * f;
     support.opacity = 1 - 0.8 * f;
-    boardMat.opacity = 1 - 0.75 * f;
+    boardMat.opacity = 1 - 0.85 * f;
     white.opacity = 1 - 0.65 * f;      // posts and crossbar stay faintly visible
     support.depthWrite = boardMat.depthWrite = white.depthWrite = f < 0.05;
   }

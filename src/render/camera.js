@@ -5,7 +5,14 @@
 import * as THREE from 'three';
 import { clamp, lerp } from '../core/math.js';
 
+const KEEPER_PLANE = 0.35, BASE_DIST = 6.75, GOAL_VIEW = 4.3;   // metres
+
 export function createCameraDirector(camera) {
+  // Distance behind the keeper's line at which GOAL_VIEW metres either side fit the screen.
+  const keeperDistance = () => {
+    const half = Math.atan(Math.tan((baseFov * Math.PI) / 360) * camera.aspect);
+    return Math.max(BASE_DIST, GOAL_VIEW / Math.tan(half));
+  };
   const pos = new THREE.Vector3(-3.5, 2.1, 16.7), look = new THREE.Vector3(-4.2, 1.6, 0);
   const wantPos = new THREE.Vector3(), wantLook = new THREE.Vector3();
   let baseFov = 50;
@@ -52,7 +59,10 @@ export function createCameraDirector(camera) {
         wantPos.set(r.pos.x - fx * 4 - fz * 2.4, 1.9, r.pos.z - fz * 4 + fx * 2.4);
         wantLook.set(r.pos.x + fx * 2.5, 1.0, r.pos.z + fz * 2.5);
       } else if (goal === 'keeper') {
-        wantPos.set(0, 3.5, -6.4); wantLook.set(0, 0.7, 10);
+        // Behind the goal. On narrow (portrait) screens the camera backs up
+        // until the whole goal mouth fits, so every corner can be seen and tapped.
+        const d = keeperDistance();
+        wantPos.set(0, Math.min(6, 3.5 * d / BASE_DIST), KEEPER_PLANE - d); wantLook.set(0, 0.7, 10);
       }
       // 'replay': wantPos / wantLook are set by the replay itself
       const rate = goal === 'menu' ? 1.5 : goal === 'pick' ? 1.8 : goal === 'replay' ? 6 : goal === 'celebrate' ? 4 : 3.2;
@@ -61,6 +71,10 @@ export function createCameraDirector(camera) {
       shake = s.reduced ? 0 : shake * Math.exp(-dt * 9);
       jolt.set(Math.sin(time * 61), Math.sin(time * 47 + 1), 0).multiplyScalar(shake);
       camera.position.copy(pos).add(jolt); camera.lookAt(look);
+      // Backed into the stands: skip drawing anything right in front of the
+      // lens (seats and crowd behind the goal) so the view stays clear.
+      const near = goal === 'keeper' ? Math.max(0.1, -pos.z - 5.5) : 0.1;
+      if (Math.abs(camera.near - near) > 0.01) { camera.near = near; camera.updateProjectionMatrix(); }
       const fov = goal === 'replay' ? baseFov * 0.66 : baseFov;
       if (Math.abs(camera.fov - fov) > 0.01) {
         camera.fov = s.reduced ? fov : lerp(camera.fov, fov, 1 - Math.exp(-dt * 5));

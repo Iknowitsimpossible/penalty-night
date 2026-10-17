@@ -55,12 +55,14 @@ export function animateRunup(b, timer) {
 
 // Keeper state: feet position, body tilt (radians, + leans to +x), arm raise 0..1.
 export function newKeeper(body) {
-  return { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8 };
+  return { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8, homeX: 0 };
 }
 const READY = 2.35;           // shoulder angle with arms out and down
-const REACHING = 0.08;
+const REACHING = 0.08;        // arms almost parallel, both hands toward the ball
 // Dive time: a base plus extra per metre of sideways travel (seconds).
-export const DIVE_BASE = 0.4, DIVE_PER_M = 0.04;        // arms almost parallel, both hands toward the ball
+export const DIVE_BASE = 0.4, DIVE_PER_M = 0.04;
+// How long a keeper stays at full stretch before dropping to the grass.
+export const DIVE_HOLD = 0.45;
 export function poseKeeper(k) {
   const b = k.body;
   b.root.position.set(k.x, k.y, k.z);
@@ -110,7 +112,9 @@ export function updateKeeper(k, dt, time) {
   }
   const d = k.dive;
   if (!d) {
-    k.x = lerp(k.x, 0.2 * Math.sin(time * 2.3), 1 - Math.exp(-dt * 6));
+    // Sway around the spot the keeper has stepped to (homeX), smaller once off-centre.
+    const home = k.homeX || 0;
+    k.x = lerp(k.x, home + 0.2 * (1 - Math.min(Math.abs(home), 1) * 0.6) * Math.sin(time * 2.3), 1 - Math.exp(-dt * 6));
     k.y = Math.max(0, Math.sin(time * 4.6)) * 0.03;
     k.arms = lerp(k.arms, 0, 1 - Math.exp(-dt * 8));
   } else {
@@ -123,8 +127,8 @@ export function updateKeeper(k, dt, time) {
     k.tilt = lerp(d.fromTilt, d.tilt, e);
     k.y = lerp(d.fromY, d.toY, e) + Math.sin(p * Math.PI) * (Math.abs(d.tilt) > 0.5 ? 0.22 : 0.1);
     k.arms = Math.min(1, p * 2.2);
-    if (d.t > d.dur + 0.3 && Math.abs(d.tilt) > 0.5) {
-      const q = Math.min((d.t - d.dur - 0.3) / 0.35, 1);
+    if (d.t > d.dur + DIVE_HOLD && Math.abs(d.tilt) > 0.5) {
+      const q = Math.min((d.t - d.dur - DIVE_HOLD) / 0.35, 1);
       k.tilt = lerp(d.tilt, d.side * 1.48, q);
       k.y = lerp(d.toY, 0.16, q);
       if (q >= 1 && !d.landed) { d.landed = true; if (k.onLand) k.onLand(); }   // e.g. a thud on the grass

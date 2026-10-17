@@ -84,13 +84,26 @@ export function explainKick({ kind, intent, ball, keeper, style }) {
   return { title: TITLES[kind], detail: `You aimed ${aimed}.`, advice, marks, view: 'shooter' };
 }
 
+// Keeper training report: when you dived, measured from the strike, and
+// how far your dive target was from where the ball went.
+export function diveReport(dive, shot) {
+  if (!dive) return 'You did not dive.';
+  const fromStrike = dive.at - RUNUP;
+  const when = dive.early ? 'before the gold bar'
+    : fromStrike < 0 ? `${(-fromStrike).toFixed(2)} s before the strike`
+    : `${fromStrike.toFixed(2)} s after the strike`;
+  const off = Math.hypot(dive.x - shot.x, dive.y - shot.y);
+  return `You dived ${when}, ${off.toFixed(1)} m from the ball.`;
+}
+
 // Your save attempt.
 //   kind: result from the shooter's side ('goal' = they scored)
 //   shot: where their shot crossed { x, y }
 //   dive: { x, y, at, early } (at = seconds since the run-up started) or null
 //   switched: the taker changed side because of an early dive
 //   flight: seconds from strike to the goal line
-export function explainSave({ kind, shot, dive, switched, flight, style }) {
+//   precise: add the timing and distance report (keeper training)
+export function explainSave({ kind, shot, dive, switched, flight, style, precise = false }) {
   const marks = [{ type: 'ball', x: shot.x, y: shot.y }];
   if (dive) marks.push({ type: 'dive', x: dive.x, y: dive.y });
   const where = describeSpot(shot.x, shot.y, 'keeper');
@@ -115,5 +128,6 @@ export function explainSave({ kind, shot, dive, switched, flight, style }) {
     } else if (Math.abs(dive.y - shot.y) > 0.9) advice = shot.y > dive.y ? 'Right side. Dive higher: tap nearer the bar.' : 'Right side. Dive lower: tap nearer the ground.';
     else advice = 'Right idea, but it was tucked in the corner.';
   }
-  return { title, detail: `Their shot: ${where}.`, advice, marks, view: 'keeper' };
+  const detail = precise ? diveReport(dive, shot) : `Their shot: ${where}.`;
+  return { title, detail, advice, marks, view: 'keeper' };
 }
