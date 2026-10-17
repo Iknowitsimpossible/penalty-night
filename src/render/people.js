@@ -61,8 +61,10 @@ const READY = 2.35;           // shoulder angle with arms out and down
 const REACHING = 0.08;        // arms almost parallel, both hands toward the ball
 // Dive time: a base plus extra per metre of sideways travel (seconds).
 export const DIVE_BASE = 0.4, DIVE_PER_M = 0.04;
-// How long a keeper stays at full stretch before dropping to the grass.
-export const DIVE_HOLD = 0.45;
+// How long a keeper stays at full stretch before dropping to the grass,
+// how long the drop takes, the rest on the grass, and the roll back up.
+export const DIVE_HOLD = 0.45, DIVE_LAND = 0.35, GETUP_PAUSE = 0.4, GETUP = 0.6;
+const smoothstep = (p) => p * p * (3 - 2 * p);
 export function poseKeeper(k) {
   const b = k.body;
   b.root.position.set(k.x, k.y, k.z);
@@ -166,16 +168,27 @@ export function updateKeeper(k, dt, time) {
     const p = Math.min(d.t / d.dur, 1);
     // Smoothstep: a push-off, a fast middle, then full stretch. (An ease-out
     // here made keepers cover most of the distance in a fraction of a second.)
-    const e = p * p * (3 - 2 * p);
+    const e = smoothstep(p);
+    const big = Math.abs(d.tilt) > 0.5;   // a real dive that ends on the grass
     k.x = lerp(d.fromX, d.toX, e);
     k.tilt = lerp(d.fromTilt, d.tilt, e);
-    k.y = lerp(d.fromY, d.toY, e) + Math.sin(p * Math.PI) * (Math.abs(d.tilt) > 0.5 ? 0.22 : 0.1);
+    k.y = lerp(d.fromY, d.toY, e) + Math.sin(p * Math.PI) * (big ? 0.22 : 0.1);
     k.arms = Math.min(1, p * 2.2);
-    if (d.t > d.dur + DIVE_HOLD && Math.abs(d.tilt) > 0.5) {
-      const q = Math.min((d.t - d.dur - DIVE_HOLD) / 0.35, 1);
+    if (d.t > d.dur + DIVE_HOLD && big) {
+      const q = Math.min((d.t - d.dur - DIVE_HOLD) / DIVE_LAND, 1);
       k.tilt = lerp(d.tilt, d.side * 1.48, q);
       k.y = lerp(d.toY, 0.16, q);
       if (q >= 1 && !d.landed) { d.landed = true; if (k.onLand) k.onLand(); }   // e.g. a thud on the grass
+    }
+    // Get up: one smooth roll back to standing where the dive ended, arms
+    // down. A small stretch or jump has nothing to land from, so it comes
+    // straight back after the hold. keepOnGrass() still applies during the roll.
+    const upAt = d.dur + DIVE_HOLD + (big ? DIVE_LAND + GETUP_PAUSE : 0);
+    if (d.t > upAt) {
+      const q = smoothstep(Math.min((d.t - upAt) / GETUP, 1));
+      k.tilt = lerp(big ? d.side * 1.48 : d.tilt, 0, q);
+      k.y = lerp(big ? 0.16 : d.toY, 0, q);
+      k.arms = 1 - q;
     }
   }
   poseKeeper(k);

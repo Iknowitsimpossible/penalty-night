@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { makePerson, KITS, newKeeper, planDive, updateKeeper } from '../src/render/people.js';
+import { makePerson, KITS, newKeeper, planDive, updateKeeper, DIVE_HOLD, DIVE_LAND, GETUP_PAUSE, GETUP } from '../src/render/people.js';
 
 // The lowest world-space vertex of every mesh in the body. Slower than
 // lowestPoint() in people.js, but it checks the real triangles, so it also
@@ -21,16 +21,18 @@ const body = makePerson(new THREE.Scene(), KITS.cpuKeeper);
 const xs = [-3.4, -2.4, -1.2, -0.4, 0, 0.4, 1.2, 2.4, 3.4];
 const ys = [0.1, 0.4, 0.9, 1.5, 2.1, 2.4];
 const H = 1 / 240;
+// Long enough for the slowest dive to land, rest, and get back up.
+const ALL_DONE = 0.52 + DIVE_HOLD + DIVE_LAND + GETUP_PAUSE + GETUP + 0.1;
 
 describe('keeper body', () => {
-  it('never goes into the grass: dive, hold at full stretch, land', () => {
+  it('never goes into the grass: dive, hold at full stretch, land, get up', () => {
     let worst = Infinity;
     for (const homeX of [0, -0.8]) {
       for (const tx of xs) for (const ty of ys) {
         const k = newKeeper(body);
         k.active = true; k.x = k.homeX = homeX;
         planDive(k, tx, ty);
-        for (let t = 0; t < 2; t += H) {
+        for (let t = 0; t < ALL_DONE; t += H) {
           updateKeeper(k, H, t);
           if (Math.round(t / H) % 4 === 0) worst = Math.min(worst, lowestVertex(body.root));
         }
@@ -48,5 +50,26 @@ describe('keeper body', () => {
     const glove = new THREE.Vector3();
     body.gloves[1].getWorldPosition(glove);
     expect(glove.y).toBeLessThan(0.45);
+  });
+
+  it('gets back up in one smooth roll and stays where the dive ended', () => {
+    for (const [tx, ty] of [[3, 0.2], [-2.6, 1.8], [0.3, 2.2], [1, 0.5]]) {
+      const k = newKeeper(body);
+      k.active = true;
+      planDive(k, tx, ty);
+      let prev = null, maxJump = 0;
+      for (let t = 0; t < ALL_DONE; t += H) {
+        updateKeeper(k, H, t);
+        if (prev) maxJump = Math.max(maxJump, Math.abs(k.tilt - prev.tilt), Math.abs(k.y - prev.y));
+        prev = { tilt: k.tilt, y: k.y };
+      }
+      expect(k.tilt).toBe(0);
+      expect(k.y).toBeLessThan(0.01);
+      expect(k.arms).toBe(0);
+      expect(k.x).toBeCloseTo(k.dive.toX, 5);
+      // At 240 steps a second, nothing moves more than a few centimetres
+      // (or a few hundredths of a radian) in one step: no snap.
+      expect(maxJump).toBeLessThan(0.03);
+    }
   });
 });
