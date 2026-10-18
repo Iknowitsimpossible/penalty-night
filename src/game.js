@@ -100,7 +100,7 @@ if (import.meta.env.DEV && !new URLSearchParams(location.search).has('boxes')) {
     ? { character: `${dir}keeper_character.fbx`, clips: Object.fromEntries(CLIP_ROLES.map((r) => [r, `${dir}keeper_${r}.fbx`])) }
     : 'models/keeper.glb';
   loadKeeperModel(scene, files)
-    .then((m) => { m.attach(keepers.cpu); keeperModel = m; })
+    .then((m) => { m.attach(keepers.cpu, KITS.cpuKeeper); keeperModel = m; })
     .catch((e) => console.warn('Animated keeper not loaded; drawing the simple body.', e));
 }
 

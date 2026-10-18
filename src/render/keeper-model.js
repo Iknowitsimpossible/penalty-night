@@ -27,7 +27,11 @@ const PALM = 0.08;           // wrist to the middle of the glove (m)
 const ELBOW_POLE = new THREE.Vector3(0, -1, -0.4).normalize();   // elbows point down and back
 // Bones that can touch the grass, with how far their surface sits below the bone (m).
 const GROUND_PARTS = [['LeftToeBase', 0.02], ['RightToeBase', 0.02], ['LeftFoot', 0.05], ['RightFoot', 0.05],
-  ['LeftHand', 0.04], ['RightHand', 0.04], ['Head', 0.11], ['Hips', 0.11], ['Spine2', 0.12], ['LeftLeg', 0.06], ['RightLeg', 0.06]];
+  ['LeftHand', 0.05], ['RightHand', 0.05], ['LeftHandMiddle1', 0.05], ['RightHandMiddle1', 0.05],   // with the gloves on
+  ['Head', 0.11], ['Hips', 0.11], ['Spine2', 0.12], ['LeftLeg', 0.06], ['RightLeg', 0.06]];
+
+// Kit meshes in the Mixamo footballer, and which kit colour each takes.
+const KIT_PARTS = [[/Shirt$/, 'shirt'], [/Shorts$/, 'shorts'], [/Socks$/, 'socks']];
 
 // Find a bone by the end of its name: Mixamo prefixes vary (mixamorig5Hips,
 // mixamorig:Hips), and the GLB export will name them its own way.
@@ -103,6 +107,25 @@ export function createKeeperModel(scene, character, clips) {
     actions[role] = a;
   }
   scene.add(root);
+
+  // Gloves: the Mixamo body has bare hands. Each glove is a flattened
+  // ellipsoid over the hand plus a strap at the wrist, parented to the hand
+  // bone so the animation (and the arm IK) carries it. Hand bones point
+  // their y axis along the fingers, x through the palm, z across it. The
+  // glove's middle sits PALM along the fingers, where the game's glove
+  // sphere is aimed.
+  const gloves = ['Left', 'Right'].map((side) => {
+    const hand = bone[side + 'Hand'];
+    const s = 1 / hand.getWorldScale(new THREE.Vector3()).x;   // metres -> the bone's units
+    const mat = () => new THREE.MeshStandardMaterial({ color: 0xf4f4f4, roughness: 0.55, metalness: 0 });
+    const palm = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), mat());
+    palm.scale.set(0.042 * s, 0.11 * s, 0.07 * s);
+    palm.position.set(0, PALM * s, 0);
+    const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * s, 0.048 * s, 0.045 * s, 16), mat());
+    strap.position.set(0, 0.01 * s, 0);
+    for (const mesh of [palm, strap]) { mesh.castShadow = true; hand.add(mesh); }
+    return { palm, strap };
+  });
 
   // What is playing: role -> { t, w }. Poses are built from this, so a replay
   // can store it and pose the model again later.
@@ -299,9 +322,27 @@ export function createKeeperModel(scene, character, clips) {
     },
     // The game body this model stands in for. Its meshes are hidden; its
     // gloves and visibility still drive the model.
-    attach(body) {
+    // kit: { shirt, shorts, socks, gloves } colours, as in people.js KITS.
+    attach(body, kit) {
       m.body = body;
       body.root.traverse((o) => { if (o.isMesh) o.visible = false; });
+      if (kit) model.setKit(kit);
+    },
+    // Team colours. The kit meshes have a white texture with the folds and
+    // shading in it; each gets its own copy of the material with the team
+    // colour multiplied over that texture.
+    setKit(kit) {
+      root.traverse((o) => {
+        if (!o.isSkinnedMesh) return;
+        const part = KIT_PARTS.find(([re]) => re.test(o.name));
+        if (!part) return;
+        if (!o.userData.ownMaterial) { o.material = o.material.clone(); o.userData.ownMaterial = true; }
+        o.material.color.setHex(kit[part[1]]);
+      });
+      for (const g of gloves) {
+        g.palm.material.color.setHex(kit.gloves || 0xf4f4f4);
+        g.strap.material.color.setHex(kit.shirt);
+      }
     },
     // k: the game's keeper when it uses the attached body, otherwise null.
     update(k, dt) {
