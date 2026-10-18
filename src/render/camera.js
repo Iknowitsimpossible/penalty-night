@@ -7,6 +7,8 @@ import { clamp, lerp } from '../core/math.js';
 
 const KEEPER_PLANE = 0.35, BASE_DIST = 6.75, GOAL_VIEW = 4.3;   // metres
 
+const isFiniteVec = (v) => Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+
 export function createCameraDirector(camera) {
   // Distance behind the keeper's line at which GOAL_VIEW metres either side fit the screen.
   const keeperDistance = () => {
@@ -68,6 +70,10 @@ export function createCameraDirector(camera) {
       const rate = goal === 'menu' ? 1.5 : goal === 'pick' ? 1.8 : goal === 'replay' ? 6 : goal === 'celebrate' ? 4 : 3.2;
       const k = s.reduced ? 1 : 1 - Math.exp(-dt * rate);
       pos.lerp(wantPos, k); look.lerp(wantLook, k);
+      // Easing can't recover from NaN (NaN + anything is NaN), so once the
+      // target is sane again, jump straight to it instead.
+      if (!isFiniteVec(pos) && isFiniteVec(wantPos)) pos.copy(wantPos);
+      if (!isFiniteVec(look) && isFiniteVec(wantLook)) look.copy(wantLook);
       shake = s.reduced ? 0 : shake * Math.exp(-dt * 9);
       jolt.set(Math.sin(time * 61), Math.sin(time * 47 + 1), 0).multiplyScalar(shake);
       camera.position.copy(pos).add(jolt); camera.lookAt(look);
@@ -84,6 +90,8 @@ export function createCameraDirector(camera) {
     snap() { pos.copy(wantPos); look.copy(wantLook); },
     shake(amount) { shake = Math.max(shake, amount); },
     resize(w, h) {
+      // A hidden container reports 0x0; w / h would be NaN and poison every shot.
+      if (!(w > 0 && h > 0)) return;
       camera.aspect = w / h;
       baseFov = w / h < 1 ? clamp(50 / (w / h) * 0.72, 50, 78) : 50;
       camera.fov = director.goal === 'replay' ? baseFov * 0.66 : baseFov;
