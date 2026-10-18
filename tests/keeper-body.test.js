@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { makePerson, KITS, newKeeper, planDive, updateKeeper, DIVE_HOLD, DIVE_LAND, GETUP_PAUSE, GETUP } from '../src/render/people.js';
+import { makePerson, KITS, newKeeper, planDive, updateKeeper, DIVE_HOLD, DIVE_LAND, GETUP_PAUSE, GETUP, SHUFFLE } from '../src/render/people.js';
+import { RUNUP } from '../src/core/constants.js';
 
 // The lowest world-space vertex of every mesh in the body. Slower than
 // lowestPoint() in people.js, but it checks the real triangles, so it also
@@ -73,34 +74,53 @@ describe('keeper body', () => {
     }
   });
 
-  it('a new kick eases the same body back to the centre instead of jumping', () => {
+  it('a new kick shuffles the same keeper sideways back to the centre', () => {
     // Lying on the grass after a long dive (before getting up), as when a
     // training shot ends early and the next one starts.
     const old = newKeeper(body);
     old.active = true;
     planDive(old, 3.2, 0.3);
     for (let t = 0; t < 1.4; t += H) updateKeeper(old, H, t);
+    const startX = body.root.position.x;
+    expect(startX).toBeGreaterThan(1);
     const k = newKeeper(body, old);
     k.active = true;
-    expect(k.x).toBe(0);   // the game state resets at once
+    expect(k.x).toBe(startX);   // starts where it was drawn
     const at = body.root.position.clone();
-    let maxMove = 0, worst = Infinity, t = 0;
-    for (; t < 0.4; t += H) {   // a little longer than BLEND
+    let maxMove = 0, worst = Infinity, steps = 0, open = false, backwards = 0, prevX = k.x, endX = null;
+    for (let t = 0; t < 0.75; t += H) {   // a little longer than SHUFFLE
       updateKeeper(k, H, t);
       maxMove = Math.max(maxMove, body.root.position.distanceTo(at));
       at.copy(body.root.position);
       worst = Math.min(worst, lowestVertex(body.root));
+      if (t < SHUFFLE && k.x > prevX + 1e-9) backwards++;
+      prevX = k.x;
+      if (endX === null && !k.shuffle) endX = k.x;
+      // count side-steps: the leading (-x side) leg opening wider than standing
+      const wide = body.hips[0].rotation.z < -0.2;
+      if (wide && !open) steps++;
+      open = wide;
     }
     expect(maxMove).toBeLessThan(0.05);         // no jump between steps
     expect(worst).toBeGreaterThanOrEqual(-0.01);
+    expect(backwards).toBe(0);                  // always heading for the centre
+    expect(steps).toBeGreaterThanOrEqual(3);    // real side-steps, not a slide
+    expect(k.shuffle).toBe(null);
     expect(k.blend).toBe(null);
-    expect(Math.abs(body.root.rotation.z)).toBeLessThan(1e-9);   // standing
-    expect(Math.abs(body.root.position.x - k.x)).toBeLessThan(1e-9);
+    expect(Math.abs(endX)).toBeLessThan(1e-9);   // exactly on the spot when the shuffle ends
+    expect(Math.abs(body.root.rotation.z)).toBeLessThan(1e-9);   // standing, facing forward
+    expect(body.root.rotation.y).toBe(0);
   });
 
-  it('a different body (the other keeper) starts with no blend', () => {
+  it('the shuffle is over before a CPU kick can be struck', () => {
+    expect(SHUFFLE).toBeLessThan(RUNUP);
+  });
+
+  it('a different body (the other keeper) starts standing, with no shuffle', () => {
     const other = makePerson(new THREE.Scene(), KITS.youKeeper);
     const old = newKeeper(other);
-    expect(newKeeper(body, old).blend).toBe(null);
+    const k = newKeeper(body, old);
+    expect(k.shuffle).toBe(null);
+    expect(k.blend).toBe(null);
   });
 });

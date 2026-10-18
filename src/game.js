@@ -316,6 +316,9 @@ function markCoached() {
   try { storage.setItem('penaltyNight.coached', '1'); } catch (err) { /* storage unavailable */ }
 }
 function shoot(kick) {
+  // A keeper still shuffling back to the centre (only after a dive by the
+  // same keeper on the last kick) must be set before the ball can reach him.
+  if (keeper.shuffle) return;
   markCoached();
   const { aimX, aimY, T, spin } = kick;
   startRecording(true);

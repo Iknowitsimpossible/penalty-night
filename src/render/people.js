@@ -55,16 +55,21 @@ export function animateRunup(b, timer) {
 
 // Keeper state: feet position, body tilt (radians, + leans to +x), arm raise 0..1.
 // prev: the keeper this one replaces. When it is the same body, still on
-// screen (a new kick in training or practice), the game state starts fresh
-// at once, but the body is drawn easing from where it was for BLEND seconds,
-// so it does not jump back to the centre in one frame.
-export const BLEND = 0.35;
+// screen (a new kick in training or practice), the keeper starts where it
+// was and shuffles sideways back to its spot over SHUFFLE seconds, while its
+// posture eases from however it was drawn (even lying down) to standing.
+// SHUFFLE is shorter than the run-up, so it is over before any ball arrives.
+export const SHUFFLE = 0.7;
+const STEP_LENGTH = 0.35;   // metres per side-step
 export function newKeeper(body, prev = null) {
-  const k = { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8, homeX: 0, blend: null };
+  const k = { body, x: 0, y: 0, z: KEEPER_Z, tilt: 0, arms: 0, dive: null, active: false, maxShift: 1.8, homeX: 0, blend: null, shuffle: null };
   if (prev && prev.body === body) {
     const r = body.root;
+    k.x = r.position.x;
+    const dist = Math.abs(k.x);
+    k.shuffle = { t: 0, fromX: k.x, steps: dist < 0.05 ? 0 : Math.max(2, Math.round(dist / STEP_LENGTH)) };
     k.blend = {
-      t: 0, pos: r.position.clone(), rotZ: r.rotation.z,
+      t: 0, y: r.position.y, rotZ: r.rotation.z,
       shoulders: body.shoulders.map((sh) => sh.rotation.z), hips: body.hips.map((h) => h.rotation.z),
     };
   }
@@ -131,18 +136,19 @@ function keepOnGrass(k) {
   liftAboveGrass(k.body.root);
   k.y = k.body.root.position.y;
 }
-// Draw the body part way between its old pose and the one just set from
-// the game state (which is left alone). Smoothstep, like the dive.
+// Draw the posture part way between the old pose and the one just set from
+// the game state (which is left alone). Smoothstep, like the dive. Only the
+// height and angles: the shuffle moves the keeper sideways.
 function drawBlend(k, dt) {
   const b = k.blend, body = k.body, root = body.root;
   b.t += dt;
-  const e = smoothstep(Math.min(b.t / BLEND, 1));
-  root.position.lerpVectors(b.pos, root.position, e);
+  const e = smoothstep(Math.min(b.t / SHUFFLE, 1));
+  root.position.y = lerp(b.y, root.position.y, e);
   root.rotation.z = lerp(b.rotZ, root.rotation.z, e);
   body.shoulders.forEach((sh, i) => { sh.rotation.z = lerp(b.shoulders[i], sh.rotation.z, e); });
   body.hips.forEach((h, i) => { h.rotation.z = lerp(b.hips[i], h.rotation.z, e); });
   liftAboveGrass(root);
-  if (b.t >= BLEND) k.blend = null;
+  if (b.t >= SHUFFLE) k.blend = null;
 }
 export function hideKeeper(body) { body.root.visible = false; }
 
@@ -168,6 +174,7 @@ export function planDive(k, tx, ty, speed = 1) {
   }
   const shift = toX - k.x;
   if (Math.abs(shift) > k.maxShift) toX = k.x + Math.sign(shift) * k.maxShift;
+  k.shuffle = null;   // a dive takes over from the shuffle
   k.dive = { t: 0, dur: (DIVE_BASE + DIVE_PER_M * Math.min(lateral, 3)) * speed, fromX: k.x, fromY: k.y, fromTilt: k.tilt, toX, toY, tilt, side, landed: false };
 }
 export function updateKeeper(k, dt, time) {
@@ -185,7 +192,19 @@ export function updateKeeper(k, dt, time) {
     return;
   }
   const d = k.dive;
-  if (!d) {
+  let step = 0, lead = 0;   // side-step height 0 -> 1 -> 0, and which hip leads
+  if (!d && k.shuffle) {
+    // Shuffle back to the spot: steps follow the distance covered, so the feet don't skate.
+    const sh = k.shuffle;
+    sh.t += dt;
+    const e = smoothstep(Math.min(sh.t / SHUFFLE, 1));
+    k.x = lerp(sh.fromX, k.homeX || 0, e);
+    step = Math.sin(Math.PI * ((e * sh.steps) % 1));
+    lead = (k.homeX || 0) > sh.fromX ? 1 : 0;   // hips[1] is on the +x side
+    k.y = 0.03 * step;
+    k.arms = 0;   // ready pose
+    if (sh.t >= SHUFFLE) k.shuffle = null;
+  } else if (!d) {
     // Sway around the spot the keeper has stepped to (homeX), smaller once off-centre.
     const home = k.homeX || 0;
     k.x = lerp(k.x, home + 0.2 * (1 - Math.min(Math.abs(home), 1) * 0.6) * Math.sin(time * 2.3), 1 - Math.exp(-dt * 6));
@@ -221,6 +240,12 @@ export function updateKeeper(k, dt, time) {
   }
   poseKeeper(k);
   if (k.blend) drawBlend(k, dt);
+  if (step > 0) {
+    // A side-step on top of the (eased) stance: the leg on the way-to-go
+    // side opens, then the feet close again.
+    k.body.hips[lead].rotation.z += (lead ? 1 : -1) * 0.3 * step;
+    liftAboveGrass(k.body.root);
+  }
 }
 // Spheres that stand in for the keeper for collisions: five along the body,
 // the two gloves (indices 5 and 6), one between the hands, and one on each
