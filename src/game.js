@@ -13,6 +13,7 @@ import { newShot, coolDown, collideStep, judge } from './physics/collisions.js';
 import { createBallMesh, createBallTracking } from './render/ball.js';
 import { createCameraDirector } from './render/camera.js';
 import { createReplays } from './render/replay.js';
+import { loadKeeperModel, CLIP_ROLES } from './render/keeper-model.js';
 import { createQualityGovernor } from './render/quality.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
@@ -87,6 +88,18 @@ const striker = makePerson(scene, KITS.youTaker);   // you: only seen in replays
 striker.root.visible = false;
 const withLanding = (k) => { k.onLand = () => sfx.land(); return k; };
 let keeper = withLanding(newKeeper(keepers.cpu));
+// The animated keeper (render/keeper-model.js) stands in for the CPU keeper's
+// simple body once its files have loaded. Until then, or without the files
+// (development only for now: they are not in production builds), the simple
+// body is drawn. Add ?boxes to the address to compare with the simple body.
+let keeperModel = null;
+if (import.meta.env.DEV && !new URLSearchParams(location.search).has('boxes')) {
+  const dir = 'assets-src/mixamo/keeper/';
+  const files = { character: `${dir}keeper_character.fbx`, clips: Object.fromEntries(CLIP_ROLES.map((r) => [r, `${dir}keeper_${r}.fbx`])) };
+  loadKeeperModel(scene, files)
+    .then((m) => { m.attach(keepers.cpu); keeperModel = m; })
+    .catch((e) => console.warn('Animated keeper not loaded; drawing the simple body.', e));
+}
 
 // ------------------------------------------------------------------ ball (physics/ball.js, render/ball.js)
 const ball = { ...createBallState(), mesh: createBallMesh(world) };
@@ -545,6 +558,8 @@ function finishPost() {
 // ------------------------------------------------------------------ replays (render/replay.js)
 const replays = createReplays({
   ball, poseKeeper, animateRunup, cam, reduced: () => motionReduced,
+  captureModel: (k) => (keeperModel && k.body === keepers.cpu ? keeperModel.capture() : null),
+  poseModel: (a, b, u) => { if (keeperModel) keeperModel.applyCaptured(a, b, u); },
   bulgeNet: (at, dir, s) => world.bulgeNet(at, dir, s),
 });
 function startRecording(mine) { replays.start(mine, keeper, mine ? striker : taker); }
@@ -1085,6 +1100,7 @@ function tick(dt) {
   }
   updateKeyboard(dt);
   if (!replays.playing) updateKeeper(keeper, sdt, time);
+  if (keeperModel && !replays.playing) keeperModel.update(keeper.body === keepers.cpu ? keeper : null, sdt);
 
   if (ball.moving) {
     const steps = Math.max(1, Math.ceil(sdt / (1 / 240)));
@@ -1195,6 +1211,12 @@ if (import.meta.env.DEV) {
     get plan() { return match.plan && { ...match.plan }; },
     get training() { return trainingStage && { ...trainingStage }; },
     get homeX() { return keeper.homeX; },
+    get keeperModel() { return keeperModel && keeperModel.state; },
+    get keeperClips() { return keeperModel && keeperModel.clips; },
+    get keeperModelRef() { return keeperModel; },
+    quickMatch() { intro = null; startMatch(quickOpponent()); },
+    // Measure the animated keeper on real kicks (render/keeper-model-check.js).
+    checkKeeper: async (kicks) => (await import('./render/keeper-model-check.js')).checkKeeperModel(window.__pn, kicks),
     get debug() { return debugView && { on: debugView.on, halted: debugView.halted }; },
     toggleDebug: () => debugView && debugView.toggle(),
     get camera() { return { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: +camera.fov.toFixed(1), near: +camera.near.toFixed(2), aspect: +camera.aspect.toFixed(2), goal: cam.goal }; },
