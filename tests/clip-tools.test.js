@@ -21,6 +21,22 @@ describe('root motion', () => {
     expect(clip.tracks[1].values[7]).toBeCloseTo(0.7071);
   });
 
+  it('works in world space under a scaled, turned parent (a Z-up export in centimetres)', () => {
+    // Blender's export: the skeleton is scaled 0.01 and turned +90 degrees about x,
+    // which sends the track's local y to world +z and local z to world -y.
+    const parent = new THREE.Matrix4().compose(new THREE.Vector3(), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2), new THREE.Vector3(0.01, 0.01, 0.01));
+    // world: start at height 0.9, travel 2 m sideways and 0.5 m forward while dropping to 0.2
+    const toLocal = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(parent.clone().invert()).toArray();
+    const track = new THREE.VectorKeyframeTrack('Hips.position', [0, 1], [...toLocal(0, 0.9, 0), ...toLocal(2, 0.2, 0.5)]);
+    const clip = new THREE.AnimationClip('dive', 1, [track]);
+    const curve = extractRootMotion(clip, 'Hips', parent);
+    expect(curve.x[1]).toBeCloseTo(2);
+    expect(curve.z[1]).toBeCloseTo(0.5);
+    const end = new THREE.Vector3().fromArray(clip.tracks[0].values, 3).applyMatrix4(parent);
+    expect(end.x).toBeCloseTo(0); expect(end.z).toBeCloseTo(0);   // travel pinned
+    expect(end.y).toBeCloseTo(0.2);                               // height kept
+  });
+
   it('a clip without a hips track has no travel', () => {
     const clip = new THREE.AnimationClip('idle', 1, []);
     expect(sampleCurve(extractRootMotion(clip, 'Hips'), 'x', 0.5)).toBe(0);

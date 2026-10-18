@@ -41,18 +41,30 @@ function findBone(root, suffix) {
 // character: a loaded Object3D with skinned meshes. clips: { role: AnimationClip }.
 export function createKeeperModel(scene, character, clips) {
   const root = character;
-  // Mixamo FBX comes in centimetres; a GLB from Blender is in metres.
+  // Mixamo FBX comes in centimetres with nothing to say so; the GLB carries
+  // its own 0.01 scale on the skeleton. Either way the body should be about
+  // 1.8 m tall.
   const size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
-  const unit = size.y > 10 ? 0.01 : 1;
-  root.scale.setScalar(unit);
+  root.scale.setScalar(size.y > 10 ? 0.01 : 1);
+  root.position.set(0, 0, 0);
+  root.updateMatrixWorld(true);
 
   root.traverse((o) => {
     if (!o.isSkinnedMesh) return;
     o.castShadow = true;
     o.frustumCulled = false;   // the bind-pose bounds don't follow a dive
     o.material = [].concat(o.material).map((m) => {
+      // A GLB's materials are already physically based (and set up for its
+      // normal maps); FBX ones are not, so those are rebuilt.
+      if (m.isMeshStandardMaterial) {
+        Object.assign(m, { roughness: 0.8, metalness: 0, skinning: true });
+        return m;
+      }
       if (m.map) m.map.encoding = THREE.sRGBEncoding;
-      return new THREE.MeshStandardMaterial({ map: m.map || null, normalMap: m.normalMap || null, color: m.map ? 0xffffff : m.color, roughness: 0.8, metalness: 0, skinning: true });
+      return new THREE.MeshStandardMaterial({
+        map: m.map || null, normalMap: m.normalMap || null, color: m.map ? 0xffffff : m.color, roughness: 0.8, metalness: 0, skinning: true,
+        transparent: m.transparent, alphaTest: m.alphaTest, side: m.side, depthWrite: m.depthWrite,   // hair cards are cut out
+      });
     });
     if (o.material.length === 1) o.material = o.material[0];
   });
@@ -72,16 +84,15 @@ export function createKeeperModel(scene, character, clips) {
     const clip = clips[role];
     if (!clip) throw new Error(`keeper model: missing clip "${role}"`);
     clip.name = role;
-    info[role] = { clip, curve: extractRootMotion(clip, bone.Hips.name) };
+    info[role] = { clip, curve: extractRootMotion(clip, bone.Hips.name, bone.Hips.parent.matrixWorld) };
   }
-  root.position.set(0, 0, 0);
   for (const role of ['dive_high_L', 'dive_high_R', 'dive_low_L', 'dive_low_R', 'catch']) {
     const side = role.endsWith('_L') ? 1 : role.endsWith('_R') ? -1 : 0;
     Object.assign(info[role], measureDive(root, info[role].clip, { hips: bone.Hips, leftHand: bone.LeftHand, rightHand: bone.RightHand, leftFoot: bone.LeftFoot, rightFoot: bone.RightFoot }, side, info[role].curve));
   }
   for (const role of ['step_L', 'step_R']) {
     const { clip, curve } = info[role];
-    info[role].speed = Math.abs(sampleCurve(curve, 'x', clip.duration)) * unit / clip.duration;   // m/s
+    info[role].speed = Math.abs(sampleCurve(curve, 'x', clip.duration)) / clip.duration;   // m/s
   }
 
   const mixer = new THREE.AnimationMixer(root);
@@ -253,14 +264,14 @@ export function createKeeperModel(scene, character, clips) {
     // gradually while the keeper is airborne.
     const gloveX = d.toX + REACH * Math.sin(d.tilt);
     const want = gloveX - it.handOff - m.x;   // hips travel needed by full stretch
-    const travel = it.reach * unit;
+    const travel = it.reach;
     const s = Math.abs(travel) > 0.05 ? THREE.MathUtils.clamp(want / travel, 0.5, 1.6) : 0;
     m.dive = {
       ref: d, role, t: 0, s, startX: m.x, extra: want - s * travel,
       // The clips also travel forward (up to 1 m by full stretch). The game's
       // gloves stay on the line, so take that out while airborne; the landing
       // keeps its forward roll from there.
-      startZ: m.z, dropZ: sampleCurve(it.curve, 'z', it.stretch) * unit + (m.z - KEEPER_Z),
+      startZ: m.z, dropZ: sampleCurve(it.curve, 'z', it.stretch) + (m.z - KEEPER_Z),
       keys: [[0, it.start], [d.dur, it.stretch], [d.dur + DIVE_HOLD, it.stretch + DIVE_HOLD * 0.6]],
       ikUntil: d.dur + DIVE_HOLD, ikFade: big ? DIVE_LAND : 0.3,
     };
@@ -284,7 +295,7 @@ export function createKeeperModel(scene, character, clips) {
     // What was measured from each clip (seconds, metres): for checking in development.
     get clips() {
       const r2 = (v) => (v === undefined ? undefined : +v.toFixed(2));
-      return Object.fromEntries(CLIP_ROLES.map((r) => [r, { dur: r2(info[r].clip.duration), stretch: r2(info[r].stretch), ground: r2(info[r].ground), start: r2(info[r].start), handOff: r2(info[r].handOff), travel: r2(info[r].reach !== undefined ? info[r].reach * unit : undefined), speed: r2(info[r].speed) }]));
+      return Object.fromEntries(CLIP_ROLES.map((r) => [r, { dur: r2(info[r].clip.duration), stretch: r2(info[r].stretch), ground: r2(info[r].ground), start: r2(info[r].start), handOff: r2(info[r].handOff), travel: r2(info[r].reach !== undefined ? info[r].reach : undefined), speed: r2(info[r].speed) }]));
     },
     // The game body this model stands in for. Its meshes are hidden; its
     // gloves and visibility still drive the model.
@@ -322,8 +333,8 @@ export function createKeeperModel(scene, character, clips) {
         // The clip's own travel at its own size while the feet push off (any
         // other size would make them skate); scaled once airborne.
         const scale = 1 + (dv.s - 1) * air;
-        const x = dv.startX + scale * sampleCurve(it.curve, 'x', ct) * unit + dv.extra * air;
-        const z = dv.startZ + sampleCurve(it.curve, 'z', ct) * unit - dv.dropZ * air;
+        const x = dv.startX + scale * sampleCurve(it.curve, 'x', ct) + dv.extra * air;
+        const z = dv.startZ + sampleCurve(it.curve, 'z', ct) - dv.dropZ * air;
         rootPos.set(x, 0, z);
         m.x = x; m.z = z;   // so a dive that starts before this one ends starts from here
         // The arms are pinned to the game's gloves once the push-off is under
@@ -390,21 +401,21 @@ export function createKeeperModel(scene, character, clips) {
   return model;
 }
 
-// Load the character and its clips (FBX for now; GLB once converted).
-// files: { character: url, clips: { role: url } }.
+// Load the keeper. Either one GLB holding the character and every clip as a
+// named animation (built by scripts/build-keeper-glb.py), or the raw Mixamo
+// FBX files: { character: url, clips: { role: url } }.
 export async function loadKeeperModel(scene, files) {
-  const isFbx = files.character.toLowerCase().endsWith('.fbx');
-  const mod = isFbx
-    ? await import('three/examples/jsm/loaders/FBXLoader.js')
-    : await import('three/examples/jsm/loaders/GLTFLoader.js');
-  const loader = isFbx ? new mod.FBXLoader() : new mod.GLTFLoader();
-  const load = async (url) => {
-    const r = await loader.loadAsync(url);
-    return isFbx ? { scene: r, clips: r.animations } : { scene: r.scene, clips: r.animations };
-  };
+  if (typeof files === 'string') {
+    const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+    const gltf = await new GLTFLoader().loadAsync(files);
+    const clips = Object.fromEntries(gltf.animations.map((c) => [c.name, c]));
+    return createKeeperModel(scene, gltf.scene, clips);
+  }
+  const { FBXLoader } = await import('three/examples/jsm/loaders/FBXLoader.js');
+  const loader = new FBXLoader();
   const roles = Object.keys(files.clips);
-  const [character, ...clipFiles] = await Promise.all([load(files.character), ...roles.map((r) => load(files.clips[r]))]);
+  const [character, ...clipFiles] = await Promise.all([files.character, ...roles.map((r) => files.clips[r])].map((u) => loader.loadAsync(u)));
   const clips = {};
-  roles.forEach((r, i) => { clips[r] = clipFiles[i].clips[0]; });
-  return createKeeperModel(scene, character.scene, clips);
+  roles.forEach((r, i) => { clips[r] = clipFiles[i].animations[0]; });
+  return createKeeperModel(scene, character, clips);
 }

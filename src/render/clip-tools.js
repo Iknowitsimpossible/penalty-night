@@ -3,22 +3,29 @@
 // and mapping game time onto clip time.
 import * as THREE from 'three';
 
-// Take the hips' horizontal travel (x and z) out of a clip and return it as
-// its own curve. The clip keeps the hips' height (crouching, lying down) and
-// all rotations, so the body animates in place while the curve says where
-// the whole body should be. Without this the clip would carry the hips
-// sideways by its own fixed amount, and the game could not make a dive
+// Take the hips' horizontal travel (world x and z) out of a clip and return
+// it as its own curve. The clip keeps the hips' height (crouching, lying
+// down) and all rotations, so the body animates in place while the curve
+// says where the whole body should be. Without this the clip would carry the
+// hips sideways by its own fixed amount, and the game could not make a dive
 // longer or shorter without the feet sliding.
-// Returns { times, x, z } relative to the first frame, in the clip's units.
-export function extractRootMotion(clip, hipsName) {
+// parentMatrix: the hips' parent's world matrix. The hips track is in the
+// parent's space, which may be scaled (centimetres) or turned (a Z-up export
+// under a Y-up scene), so travel is worked out in world space.
+// Returns { times, x, z } relative to the first frame, in world units.
+export function extractRootMotion(clip, hipsName, parentMatrix = new THREE.Matrix4()) {
   const track = clip.tracks.find((t) => t.name === `${hipsName}.position`);
   if (!track) return { times: new Float32Array([0]), x: new Float32Array([0]), z: new Float32Array([0]) };
   const n = track.times.length, v = track.values;
-  const x0 = v[0], z0 = v[2];
+  const toWorld = new THREE.Matrix3().setFromMatrix4(parentMatrix);   // rotation and scale only
+  const toLocal = toWorld.clone().invert();
+  const p = new THREE.Vector3(), first = new THREE.Vector3().fromArray(v, 0).applyMatrix3(toWorld);
   const x = new Float32Array(n), z = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    x[i] = v[i * 3] - x0; z[i] = v[i * 3 + 2] - z0;
-    v[i * 3] = x0; v[i * 3 + 2] = z0;
+    p.fromArray(v, i * 3).applyMatrix3(toWorld);
+    x[i] = p.x - first.x; z[i] = p.z - first.z;
+    p.x = first.x; p.z = first.z;   // pin the travel, keep the height
+    p.applyMatrix3(toLocal).toArray(v, i * 3);
   }
   return { times: track.times.slice(), x, z };
 }
@@ -54,7 +61,7 @@ export function warpTime(t, keys, after = 1) {
 //   stretch: full stretch, when the leading hand is furthest from the
 //            opposite foot before the hips reach the grass
 //   ground:  when the hips first get down near their lowest
-//   reach:   how far the hips have travelled sideways at full stretch (clip units)
+//   reach:   how far the hips have travelled sideways at full stretch
 //   handOff: at full stretch, how far (world units, sideways) the leading hand
 //            is from the hips; for a catch, the middle of the two hands
 // side: +1 for a dive towards +x, -1 towards -x, 0 for a catch (no side: full
@@ -63,7 +70,6 @@ export function warpTime(t, keys, after = 1) {
 export function measureDive(root, clip, bones, side, curve, steps = 120) {
   const mixer = new THREE.AnimationMixer(root);
   const action = mixer.clipAction(clip).play();
-  const scale = root.scale.x;
   const hand = new THREE.Vector3(), foot = new THREE.Vector3(), hips = new THREE.Vector3();
   const lead = side >= 0 ? bones.leftHand : bones.rightHand;   // the keeper faces +z: left hand is on +x
   const far = side >= 0 ? bones.rightFoot : bones.leftFoot;
@@ -71,7 +77,7 @@ export function measureDive(root, clip, bones, side, curve, steps = 120) {
   for (let i = 0; i <= steps; i++) {
     const t = (clip.duration - 1e-3) * i / steps;
     mixer.setTime(t); root.updateMatrixWorld(true);
-    const travel = sampleCurve(curve, 'x', t) * scale;   // put back the travel taken out of the clip
+    const travel = sampleCurve(curve, 'x', t);   // put back the travel taken out of the clip
     lead.getWorldPosition(hand); hand.x += travel;
     far.getWorldPosition(foot); foot.x += travel;
     bones.hips.getWorldPosition(hips);

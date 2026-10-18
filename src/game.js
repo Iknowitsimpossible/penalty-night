@@ -89,13 +89,16 @@ striker.root.visible = false;
 const withLanding = (k) => { k.onLand = () => sfx.land(); return k; };
 let keeper = withLanding(newKeeper(keepers.cpu));
 // The animated keeper (render/keeper-model.js) stands in for the CPU keeper's
-// simple body once its files have loaded. Until then, or without the files
-// (development only for now: they are not in production builds), the simple
-// body is drawn. Add ?boxes to the address to compare with the simple body.
+// simple body once models/keeper.glb has loaded (scripts/build-keeper-glb.py
+// makes it). Until then, or if it fails, the simple body is drawn.
+// Development only for now. Add ?boxes to the address to compare with the
+// simple body, or ?fbx to load the raw Mixamo downloads instead of the GLB.
 let keeperModel = null;
 if (import.meta.env.DEV && !new URLSearchParams(location.search).has('boxes')) {
   const dir = 'assets-src/mixamo/keeper/';
-  const files = { character: `${dir}keeper_character.fbx`, clips: Object.fromEntries(CLIP_ROLES.map((r) => [r, `${dir}keeper_${r}.fbx`])) };
+  const files = new URLSearchParams(location.search).has('fbx')
+    ? { character: `${dir}keeper_character.fbx`, clips: Object.fromEntries(CLIP_ROLES.map((r) => [r, `${dir}keeper_${r}.fbx`])) }
+    : 'models/keeper.glb';
   loadKeeperModel(scene, files)
     .then((m) => { m.attach(keepers.cpu); keeperModel = m; })
     .catch((e) => console.warn('Animated keeper not loaded; drawing the simple body.', e));
