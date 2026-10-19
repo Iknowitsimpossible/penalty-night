@@ -64,6 +64,14 @@ Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
 - In development, `window.__pn` steps the game at a fixed rate for exact,
   repeatable browser checks: `__pn.freeze()`, `__pn.seed(1)`,
   `__pn.step(1.5)`, `__pn.state`, `__pn.bench()`. It is not in production builds.
+- In development the CPU keeper is drawn by an animated Mixamo model
+  (`src/render/keeper-model.js`) when its files are in
+  `assets-src/mixamo/keeper/` (not in git; see
+  `docs/art-direction/mixamo-downloads.md`). It only follows the simple
+  keeper body, which still decides every save. Add `?boxes` to the address
+  to see the simple body instead. `await __pn.checkKeeper()` plays real kicks
+  and reports foot sliding, floating, hip speed and the gap between the
+  animated gloves and the collision gloves.
 - In development, press **C** for the collision debug view: the keeper's
   collision spheres, the posts and bar, and the ball as wireframes. While
   it is on, the game freezes the first time a kick touches the frame or the

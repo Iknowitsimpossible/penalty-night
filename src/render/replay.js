@@ -6,7 +6,8 @@ import { clamp, lerp } from '../core/math.js';
 
 const MAX_FRAMES = 900;
 
-// deps: { ball, poseKeeper, animateRunup, bulgeNet, cam, reduced: () => bool }
+// deps: { ball, poseKeeper, animateRunup, bulgeNet, cam, reduced: () => bool,
+//         captureModel(keeper), poseModel(a, b, u) } (the last two optional: the animated keeper)
 export function createReplays(deps) {
   const { ball, poseKeeper, animateRunup, bulgeNet, cam } = deps;
   let rec = null, play = null;
@@ -14,6 +15,7 @@ export function createReplays(deps) {
   const snapshot = (t, keeper, tk) => ({
     t, b: [ball.pos.x, ball.pos.y, ball.pos.z], q: ball.mesh.quaternion.clone(),
     k: [keeper.x, keeper.y, keeper.tilt, keeper.arms], tk,
+    m: deps.captureModel ? deps.captureModel(keeper) : null,
   });
 
   return {
@@ -64,6 +66,7 @@ export function createReplays(deps) {
       keeper.x = lerp(a.k[0], b.k[0], u); keeper.y = lerp(a.k[1], b.k[1], u);
       keeper.tilt = lerp(a.k[2], b.k[2], u); keeper.arms = lerp(a.k[3], b.k[3], u);
       poseKeeper(keeper);
+      if (deps.poseModel) deps.poseModel(a.m, b.m, u);
       animateRunup(rec.taker, lerp(a.tk, b.tk, u));
       while (play.ev < rec.events.length && rec.events[play.ev].t <= play.t) {
         const e = rec.events[play.ev++];
