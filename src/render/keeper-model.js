@@ -197,8 +197,10 @@ export function createKeeperModel(scene, character, clips) {
     lockFeet(dt);
 
     let err = 0;
-    if (targets) {
+    m.ikPull = 0;
+    if (targets && !model.armIkOff) {   // armIkOff: development, to see the clip's own arms
       for (const side of ['Left', 'Right']) {
+        m.ikPull = Math.max(m.ikPull, bone[side + 'Hand'].getWorldPosition(_g).distanceTo(wristTargetsFor(side, gloves)));   // how far the IK drags the clip's wrist
         const e = solveTwoBone(bone[side + 'Arm'], bone[side + 'ForeArm'], bone[side + 'Hand'], wristTargetsFor(side, gloves), ELBOW_POLE, ikWeight);
         err = Math.max(err, e || 0);
       }
@@ -313,7 +315,7 @@ export function createKeeperModel(scene, character, clips) {
   const model = {
     root,
     info,
-    get state() { return { mode: m.dive ? m.dive.role : 'standing', x: m.x, ik: m.ikWeight, ikError: m.lastIkError, corr: m.corr.length() }; },
+    get state() { return { mode: m.dive ? m.dive.role : 'standing', x: m.x, ik: m.ikWeight, ikError: m.lastIkError, corr: m.corr.length(), pull: m.ikPull || 0 }; },
     bones: bone,
     // What was measured from each clip (seconds, metres): for checking in development.
     get clips() {
