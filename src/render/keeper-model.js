@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { KEEPER_Z, REACH } from '../core/constants.js';
 import { DIVE_HOLD, DIVE_LAND } from './people.js';
 import { extractRootMotion, sampleCurve, warpTime, measureDive } from './clip-tools.js';
-import { solveTwoBone } from './ik.js';
+import { solveTwoBone, createArm, solveArm, resetArm } from './ik.js';
 
 // The clips the model needs, by role. step_L / dive_*_L move towards +x
 // (the keeper's own left, since the keeper faces +z).
@@ -24,7 +24,6 @@ export const CLIP_ROLES = ['idle', 'step_L', 'step_R', 'dive_high_L', 'dive_high
 const FADE_IN_DIVE = 0.12;   // seconds to blend from standing into a dive
 const FADE_OUT = 0.3;        // seconds to blend back to standing
 const PALM = 0.08;           // wrist to the middle of the glove (m)
-const ELBOW_POLE = new THREE.Vector3(0, -1, -0.4).normalize();   // elbows point down and back
 // Bones that can touch the grass, with how far their surface sits below the bone (m).
 const GROUND_PARTS = [['LeftToeBase', 0.02], ['RightToeBase', 0.02], ['LeftFoot', 0.05], ['RightFoot', 0.05],
   ['LeftHand', 0.05], ['RightHand', 0.05], ['LeftHandMiddle1', 0.05], ['RightHandMiddle1', 0.05],   // with the gloves on
@@ -81,6 +80,12 @@ export function createKeeperModel(scene, character, clips) {
     return bone[a].getWorldPosition(new THREE.Vector3()).distanceTo(bone[b].getWorldPosition(new THREE.Vector3()));
   }
   const reach = { Left: armLength('Left'), Right: armLength('Right') };
+  // In every clip the elbow bends about the upper arm's z axis: +z on the
+  // left arm, -z on the right (mirrored).
+  const arms = {
+    Left: createArm(bone.LeftArm, bone.LeftForeArm, bone.LeftHand, new THREE.Vector3(0, 0, 1)),
+    Right: createArm(bone.RightArm, bone.RightForeArm, bone.RightHand, new THREE.Vector3(0, 0, -1)),
+  };
 
   // Root motion out of every clip, then measure the dives.
   const info = {};
@@ -153,8 +158,10 @@ export function createKeeperModel(scene, character, clips) {
   // hold planted feet still and pin the gloves. Shared by live play and replays.
   //   corr: { solve: weight } to move the body towards gloves it can't reach,
   //         or { fixed: Vector3 } to apply a known shift (fading one out, replays)
+  //   elbows: { Left, Right } elbow directions stored by a replay, or null
+  //         to use (and update) each arm's remembered one
   const _s = new THREE.Vector3(), _t = new THREE.Vector3(), _d = new THREE.Vector3(), _need = new THREE.Vector3(), _g = new THREE.Vector3();
-  function pose(mixNow, rootPos, ikWeight, corr, gloves, dt) {
+  function pose(mixNow, rootPos, ikWeight, corr, gloves, dt, elbows = null) {
     for (const role of CLIP_ROLES) {
       const v = mixNow[role];
       const a = actions[role];
@@ -198,12 +205,13 @@ export function createKeeperModel(scene, character, clips) {
 
     let err = 0;
     m.ikPull = 0;
-    if (targets && !model.armIkOff) {   // armIkOff: development, to see the clip's own arms
-      for (const side of ['Left', 'Right']) {
-        m.ikPull = Math.max(m.ikPull, bone[side + 'Hand'].getWorldPosition(_g).distanceTo(wristTargetsFor(side, gloves)));   // how far the IK drags the clip's wrist
-        const e = solveTwoBone(bone[side + 'Arm'], bone[side + 'ForeArm'], bone[side + 'Hand'], wristTargetsFor(side, gloves), ELBOW_POLE, ikWeight);
-        err = Math.max(err, e || 0);
-      }
+    for (const side of ['Left', 'Right']) {
+      if (model.armIkOff) { resetArm(arms[side]); continue; }   // development, to see the clip's own arms
+      if (!targets) { solveArm(arms[side], null, 0, dt); continue; }   // still catching up with the clip, if it was pinned
+      const target = wristTargetsFor(side, gloves);
+      m.ikPull = Math.max(m.ikPull, bone[side + 'Hand'].getWorldPosition(_g).distanceTo(target));   // how far the IK drags the clip's wrist
+      const e = solveArm(arms[side], target, ikWeight, dt, elbows && elbows[side]);
+      err = Math.max(err, e || 0);
     }
     m.lastIkError = ikWeight >= 1 ? err : 0;
   }
@@ -312,11 +320,13 @@ export function createKeeperModel(scene, character, clips) {
   }
 
   const rootPos = new THREE.Vector3();
+  const replayElbows = { Left: new THREE.Vector3(), Right: new THREE.Vector3() };
   const model = {
     root,
     info,
     get state() { return { mode: m.dive ? m.dive.role : 'standing', x: m.x, ik: m.ikWeight, ikError: m.lastIkError, corr: m.corr.length(), pull: m.ikPull || 0 }; },
     bones: bone,
+    arms,   // the arm IK's state, for checking in development
     // What was measured from each clip (seconds, metres): for checking in development.
     get clips() {
       const r2 = (v) => (v === undefined ? undefined : +v.toFixed(2));
@@ -353,7 +363,7 @@ export function createKeeperModel(scene, character, clips) {
       if (!root.visible || !k) return;
       if (!wasVisible) {
         // Coming back on screen: start where the game's keeper is, standing.
-        m.x = k.x; m.z = KEEPER_Z; m.vx = 0; m.vz = 0; m.dive = null; fadeFrom = null; unlockFeet();
+        m.x = k.x; m.z = KEEPER_Z; m.vx = 0; m.vz = 0; m.dive = null; fadeFrom = null; unlockFeet(); resetArm(arms.Left); resetArm(arms.Right);
         mix = { idle: { t: 0, w: 1 } };
       }
       if (fadeFrom) { fadeFrom.a = Math.min(1, fadeFrom.a + dt / fadeFrom.dur); if (fadeFrom.a >= 1) fadeFrom = null; }
@@ -423,7 +433,8 @@ export function createKeeperModel(scene, character, clips) {
       if (!root.visible) return null;
       const now = currentMix(), acts = [];
       for (const [r, v] of Object.entries(now)) if (v.w > 0.001) acts.push([r, clampTime(r, v.t), v.w]);
-      return { acts, p: m.usedRoot.toArray(), ik: m.ikWeight };
+      const el = arms.Left.used && arms.Right.used ? [arms.Left.used.toArray(), arms.Right.used.toArray()] : null;
+      return { acts, p: m.usedRoot.toArray(), ik: m.ikWeight, el };
     },
     applyCaptured(a, b, u, dt = 1 / 120) {
       if (!a) return;
@@ -438,7 +449,10 @@ export function createKeeperModel(scene, character, clips) {
         out[r] = { t: looping && Math.abs(gap) > info[r].clip.duration / 2 ? t : ta + gap * u, w: out[r].w + w * u };
       }
       rootPos.fromArray(a.p).lerp(_g.fromArray(b.p), u);
-      pose(out, rootPos, a.ik + (b.ik - a.ik) * u, { fixed: _need.set(0, 0, 0) }, m.body.gloves, dt);
+      // the elbow directions the live solve used, so the arms come out the same
+      const ea = a.el || b.el, eb = b.el || a.el;
+      const elbows = ea && { Left: replayElbows.Left.fromArray(ea[0]).lerp(_d.fromArray(eb[0]), u), Right: replayElbows.Right.fromArray(ea[1]).lerp(_d.fromArray(eb[1]), u) };
+      pose(out, rootPos, a.ik + (b.ik - a.ik) * u, { fixed: _need.set(0, 0, 0) }, m.body.gloves, dt, elbows);
     },
   };
   return model;

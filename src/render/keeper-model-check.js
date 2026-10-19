@@ -88,7 +88,9 @@ export function checkKeeperModel(pn, kicks = DEFAULT_KICKS, seed = 11, trace = n
         row.offHingeMax = Math.max(row.offHingeMax, a.offHinge);
       }
       if (trace && prev) trace.push({ kick: rows.length, ct: +(st.keeperDive ? st.keeperDive.t : -1).toFixed(3), mode: s.mode, ik: r3(s.ik), corr: r3(s.corr), pull: r3(s.pull),
-        arms: arms.map((a, j) => [Math.round(a.roll * DEG / dt), Math.round(a.bend), Math.round(a.offHinge), +(a.elbow.distanceTo(prev.arms[j].elbow) / dt).toFixed(1)]) });
+        ball: st.ball[2] < 0.6,
+        arms: arms.map((a, j) => [Math.round(a.roll * DEG / dt), Math.round(a.bend), Math.round(a.offHinge), +(a.elbow.distanceTo(prev.arms[j].elbow) / dt).toFixed(1),
+          model.arms ? Math.round(model.arms[j ? 'Right' : 'Left'].handBack * DEG) : null]) });
       prev = { toes, hips, arms };
     }
     rows.push({

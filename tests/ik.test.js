@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { solveTwoBone, createArm, solveArm, MIN_BEND, MAX_BEND, MAX_TURN } from '../src/render/ik.js';
+import { solveTwoBone, createArm, solveArm, MIN_BEND, MAX_BEND, BEND_SPEED, ROLL_SPEED } from '../src/render/ik.js';
 
 // A right arm hanging off a rotated, scaled body, like a skinned model's
 // bones: upper arm 0.3, forearm 0.28.
@@ -162,26 +162,63 @@ describe('arm IK', () => {
     expect(worst).toBeLessThan(THREE.MathUtils.degToRad(400));
   });
 
-  it('turns the elbow towards a sudden new animated direction no faster than MAX_TURN', () => {
+  it('rolls the upper arm no faster than ROLL_SPEED, with the wrist kept on the target', () => {
     const a = makeMixamoArm({ bend: 0.8, roll: 0 });
     const target = around(a, new THREE.Vector3(1, -0.2, 0.5), 0.38);
     solveArm(a.arm, target, 1, 1 / 60);
-    const start = a.arm.used.clone();
     // the animation suddenly rolls the arm by 2 rad
     const rolled = makeMixamoArm({ bend: 0.8, roll: 2 });
-    a.upper.quaternion.copy(rolled.upper.quaternion); a.lower.quaternion.copy(rolled.lower.quaternion); a.body.updateMatrixWorld(true);
-    const turned = [];
+    let prev = a.upper.quaternion.clone();
+    const rolls = [];
     for (let f = 0; f < 60; f++) {
       a.upper.quaternion.copy(rolled.upper.quaternion); a.lower.quaternion.copy(rolled.lower.quaternion); a.body.updateMatrixWorld(true);
-      const err = solveArm(a.arm, target, 1, 1 / 60);
-      expect(err).toBeLessThan(1e-4);   // the glove stays put while the elbow turns
-      turned.push(a.arm.used.angleTo(start));
+      expect(solveArm(a.arm, target, 1, 1 / 60)).toBeLessThan(1e-4);
+      rolls.push(rollBetween(prev, a.upper.quaternion));
+      prev = a.upper.quaternion.clone();
     }
-    for (let f = 1; f < turned.length; f++) expect(turned[f] - turned[f - 1]).toBeLessThanOrEqual(MAX_TURN / 60 + 1e-6);
-    // and it gets there: the same as solving fresh on the rolled animation
+    expect(Math.max(...rolls)).toBeLessThanOrEqual(ROLL_SPEED / 60 + 1e-4);
+    expect(rolls[0]).toBeGreaterThan(ROLL_SPEED / 60 * 0.9);   // it does turn, at the limit
+    // and gets there: the same as solving fresh on the rolled animation
     const fresh = makeMixamoArm({ bend: 0.8, roll: 2 });
     solveArm(fresh.arm, target, 1, 1 / 60);
-    expect(a.arm.used.angleTo(fresh.arm.used)).toBeLessThan(0.01);
+    expect(a.upper.quaternion.angleTo(fresh.upper.quaternion)).toBeLessThan(0.01);
+  });
+
+  it('bends the elbow no faster than BEND_SPEED', () => {
+    const a = makeMixamoArm({ bend: 0.6 });
+    const anim = { upper: a.upper.quaternion.clone(), lower: a.lower.quaternion.clone() };
+    const bends = [];
+    for (let f = 0; f < 30; f++) {
+      a.upper.quaternion.copy(anim.upper); a.lower.quaternion.copy(anim.lower); a.body.updateMatrixWorld(true);
+      solveArm(a.arm, around(a, new THREE.Vector3(1, 0.2, 0), f < 3 ? 0.2 : 0.6), 1, 1 / 60);   // a target that suddenly jumps out of reach
+      bends.push(elbowOf(a).bend);
+    }
+    for (let f = 1; f < bends.length; f++) expect(Math.abs(bends[f] - bends[f - 1])).toBeLessThanOrEqual(BEND_SPEED / 60 + 1e-6);
+    expect(bends[bends.length - 1]).toBeCloseTo(MIN_BEND, 5);   // and gets straight in the end
+  });
+
+  it('after the weight is back to 0, eases back to the animation and then lets go', () => {
+    const a = makeMixamoArm({ bend: 0.8, roll: 0 });
+    const anim = { upper: a.upper.quaternion.clone(), lower: a.lower.quaternion.clone() };
+    const target = around(a, new THREE.Vector3(-1, 0.5, 0.2), 0.4);
+    for (let f = 0; f < 10; f++) {
+      a.upper.quaternion.copy(anim.upper); a.lower.quaternion.copy(anim.lower); a.body.updateMatrixWorld(true);
+      solveArm(a.arm, target, 1, 1 / 60);
+    }
+    // fade the weight out over a fifth of a second, then keep going at 0
+    let prev = a.upper.quaternion.clone(), frames = 0;
+    for (; frames < 200; frames++) {
+      a.upper.quaternion.copy(anim.upper); a.lower.quaternion.copy(anim.lower); a.body.updateMatrixWorld(true);
+      const w = Math.max(0, 1 - (frames + 1) / 12);
+      const r = solveArm(a.arm, w > 0 ? target : null, w, 1 / 60);
+      expect(rollBetween(prev, a.upper.quaternion)).toBeLessThanOrEqual(ROLL_SPEED / 60 + 1e-4);
+      prev = a.upper.quaternion.clone();
+      if (r === null && !a.arm.last) break;
+    }
+    expect(frames).toBeGreaterThan(12);   // it took a while: no snap back
+    expect(frames).toBeLessThan(200);
+    expect(a.upper.quaternion.angleTo(anim.upper)).toBeLessThan(1e-6);
+    expect(a.lower.quaternion.angleTo(anim.lower)).toBeLessThan(1e-6);
   });
 
   it('carries the elbow round with the body, not fixed in the world', () => {

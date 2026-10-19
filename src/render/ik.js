@@ -112,55 +112,63 @@ export function solveTwoBone(upper, lower, end, target, pole, weight = 1) {
 // picture and noodly arms show:
 //   - The elbow is a hinge. It only bends about `hinge` (an axis in the
 //     upper arm's own frame), between MIN_BEND and MAX_BEND from straight,
-//     so it can't bend sideways, lock out or fold up.
-//   - Bent to the right angle, the arm is a rigid shape. It is turned at
-//     the shoulder so the wrist lands on the target, with the elbow pointing
-//     a remembered way (`arm.elbow`). That way follows the animation's (its
-//     hinge axis says where the elbow points, even when the arm is straight)
-//     but turns at most MAX_TURN, so the upper arm can't spin.
+//     and no faster than BEND_SPEED.
+//   - Bent to that angle, the arm is a rigid shape, turned at the shoulder so
+//     the wrist points at the target. That leaves one free choice: how far
+//     the arm is swivelled about the shoulder -> target line (which way the
+//     elbow points); the wrist stays put whatever it is. The solver swivels
+//     towards the animation's elbow direction (read from its hinge axis, so
+//     it is defined for a straight arm too), but never so fast that the upper
+//     arm rolls about its own length faster than ROLL_SPEED.
 //   - weight slides the target from the animated wrist to the real target,
-//     so the hand travels a smooth path; at 0 the animation is untouched.
-// Everything is worked out in the shoulder bone's frame (the upper arm's
-// parent), so a body turning in a dive carries the elbow with it. The arm
-// bones are assumed to have no scale of their own (the model's is on the root).
+//     so the hand travels a smooth path. When the weight is back to 0 the arm
+//     keeps being solved (onto the animated wrist) until it has caught up
+//     with the animation, then lets go, so it never snaps back.
+// It all happens in the shoulder bone's frame (the upper arm's parent), so a
+// body turning in a dive carries the arm with it. The arm bones are assumed
+// to have no scale of their own (the model's is on the root).
 export const MIN_BEND = THREE.MathUtils.degToRad(5);
 export const MAX_BEND = THREE.MathUtils.degToRad(140);
-export const MAX_TURN = THREE.MathUtils.degToRad(400);   // the elbow direction's top speed (per second)
-const ELBOW_LAG = 0.08;   // seconds for the elbow direction to catch up with the animation's
+export const BEND_SPEED = THREE.MathUtils.degToRad(600);   // per second
+export const ROLL_SPEED = THREE.MathUtils.degToRad(450);   // per second
+const CAUGHT_UP = THREE.MathUtils.degToRad(0.5);
 
 // upper, lower, end: shoulder, elbow and wrist bones. hinge: the elbow's
 // axis in the upper arm's frame, the way that bends the arm (right-hand rule).
 export function createArm(upper, lower, end, hinge) {
-  return { upper, lower, end, hinge: hinge.clone().normalize(), elbow: null, line: null, used: null };
+  return { upper, lower, end, hinge: hinge.clone().normalize(), axis: lower.position.clone().normalize(), last: null, bend: 0, used: null };
 }
+// Forget the last frame (after a jump: the arm is not continuing a motion).
+export function resetArm(arm) { arm.last = null; arm.used = null; }
 
 const _S = new THREE.Vector3(), _T = new THREE.Vector3(), _W = new THREE.Vector3(), _d = new THREE.Vector3();
-const _v1 = new THREE.Vector3(), _f2 = new THREE.Vector3(), _hp = new THREE.Vector3(), _fp = new THREE.Vector3();
+const _v1 = new THREE.Vector3(), _f2 = new THREE.Vector3(), _hp = new THREE.Vector3(), _fp = new THREE.Vector3(), _x = new THREE.Vector3();
 const _e1 = new THREE.Vector3(), _e2 = new THREE.Vector3(), _e3 = new THREE.Vector3(), _p = new THREE.Vector3(), _pa = new THREE.Vector3();
-const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _r = new THREE.Quaternion(), _qa = new THREE.Quaternion();
+const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _r = new THREE.Quaternion(), _qa = new THREE.Quaternion(), _qf = new THREE.Quaternion();
+const _qg = new THREE.Quaternion(), _qt = new THREE.Quaternion(), _dq = new THREE.Quaternion();
 
-// The signed angle from a to b about axis (all perpendicular to it).
-const signedAngle = (a, b, axis) => Math.atan2(axis.dot(_e3.crossVectors(a, b)), a.dot(b));
-// Turn v (perpendicular to axis) about axis by angle, in place.
-const turn = (v, axis, angle) => v.applyQuaternion(_r.setFromAxisAngle(axis, angle));
+// The signed angle from a to b about axis (both perpendicular to it).
+const signedAngle = (a, b, axis) => Math.atan2(axis.dot(_x.crossVectors(a, b)), a.dot(b));
 
-// target: world-space point. dt: seconds since the last solve of this arm.
-// elbow: a fixed elbow direction (shoulder frame) instead of the remembered
-// one; a replay stores arm.used, the direction each solve ended up using,
-// and passes it back. Returns how far the wrist ends up from target.
+// target: world-space point, or null for the animated wrist. dt: seconds
+// since this arm's last solve. elbow: an elbow direction (shoulder frame) to
+// use as it is, from a replay: each solve leaves the one it used in arm.used.
+// Returns how far the wrist ends up from target, or null if the animation
+// was left alone.
 export function solveArm(arm, target, weight, dt, elbow = null) {
   const { upper, lower, end, hinge } = arm;
-  if (weight <= 0) { arm.elbow = null; arm.used = null; return null; }
+  if (weight <= 0 && !arm.last && !elbow) return null;
   const parent = upper.parent;
   upper.updateMatrixWorld(true);
   _S.copy(upper.position);
-  _T.copy(target); parent.worldToLocal(_T);
   _W.setFromMatrixPosition(end.matrixWorld); parent.worldToLocal(_W);
-  _T.lerp(_W, 1 - weight);   // where the wrist goes this frame
-  _qa.copy(upper.quaternion);
+  if (target) { _T.copy(target); parent.worldToLocal(_T); } else _T.copy(_W);
+  _T.lerp(_W, 1 - Math.max(weight, 0));   // where the wrist goes this frame
+  _qa.copy(upper.quaternion); _qf.copy(lower.quaternion);
   const dist = _d.subVectors(_T, _S).length();
-  if (dist < 1e-9) return _W.distanceTo(_T);
+  if (dist < 1e-9) return null;
   _d.divideScalar(dist);
+  const live = !elbow && arm.last;   // carrying on from last frame's solve
 
   // 1. The elbow. In the upper arm's frame, shoulder -> elbow is v1 and
   // elbow -> wrist is f2; turning the forearm about the hinge changes the
@@ -171,59 +179,84 @@ export function solveArm(arm, target, weight, dt, elbow = null) {
   _hp.copy(_v1).addScaledVector(hinge, -v1h);
   _fp.copy(_f2).addScaledVector(hinge, -f2h);
   const cosBend = (dist * dist - _v1.lengthSq() - _f2.lengthSq() - 2 * v1h * f2h) / (2 * _hp.length() * _fp.length());
-  const want = THREE.MathUtils.clamp(Math.acos(THREE.MathUtils.clamp(cosBend, -1, 1)), MIN_BEND, MAX_BEND);
-  const now = signedAngle(_hp, _fp, hinge);
-  lower.quaternion.premultiply(_r.setFromAxisAngle(hinge, want - now));
+  let bend = THREE.MathUtils.clamp(Math.acos(THREE.MathUtils.clamp(cosBend, -1, 1)), MIN_BEND, MAX_BEND);
+  if (live) bend = arm.bend + THREE.MathUtils.clamp(bend - arm.bend, -BEND_SPEED * dt, BEND_SPEED * dt);
+  const animBend = signedAngle(_hp, _fp, hinge);
+  lower.quaternion.premultiply(_r.setFromAxisAngle(hinge, bend - animBend));
 
-  // 2. Which way the elbow points: a direction across the shoulder -> target
-  // line. The animation's is where its hinge axis says (the elbow sits on
-  // the line x hinge side); how well that is defined falls to nothing when
-  // the line runs along the hinge axis.
+  // 2. Which way the elbow should point: across the shoulder -> target line,
+  // where the animation's hinge axis says (the elbow is on the line x hinge
+  // side). That is poorly defined when the line runs along the hinge axis;
+  // there the last frame's direction is trusted more.
   _pa.copy(hinge).applyQuaternion(_qa);
   _pa.crossVectors(_d, _pa);
   const sure = _pa.length();
-  if (sure > 1e-6) _pa.divideScalar(sure);
-  if (elbow) {
-    _p.copy(elbow);
-  } else if (!arm.elbow) {
-    arm.elbow = sure > 1e-6 ? _pa.clone() : perpendicular(_d, new THREE.Vector3());
-    arm.line = _d.clone();
-    _p.copy(arm.elbow);
-  } else {
-    // carry the remembered direction round with the line (a small turn each
-    // frame, so no twist about the line), then ease it towards the
-    // animation's, quicker the surer that is
-    arm.elbow.applyQuaternion(_r.setFromUnitVectors(arm.line, _d));
-    arm.line.copy(_d);
-    if (sure > 1e-6) {
-      const gap = signedAngle(arm.elbow, _pa, _d);
-      const step = Math.min(Math.abs(gap) * (1 - Math.exp(-dt / ELBOW_LAG)), MAX_TURN * dt) * THREE.MathUtils.smoothstep(sure, 0.1, 0.4);
-      turn(arm.elbow, _d, Math.sign(gap) * step);
+  if (elbow) _p.copy(elbow);
+  else if (sure > 1e-6) _p.copy(_pa).divideScalar(sure);
+  else perpendicular(_d, _p);
+  if (live && arm.used) {
+    _e1.copy(arm.used).addScaledVector(_d, -arm.used.dot(_d));
+    if (_e1.lengthSq() > 1e-8) {
+      _e1.normalize();
+      const toAnim = signedAngle(_e1, _p, _d);
+      _p.copy(_e1).applyQuaternion(_r.setFromAxisAngle(_d, THREE.MathUtils.smoothstep(sure, 0.1, 0.4) * toAnim));
     }
-    _p.copy(arm.elbow);
-    // part way back to the animation's while the IK fades, so it hands over
-    // without a jump
-    if (weight < 1 && sure > 1e-6) turn(_p, _d, (1 - weight) * signedAngle(_p, _pa, _d));
   }
-  _p.addScaledVector(_d, -_p.dot(_d));
-  if (_p.lengthSq() < 1e-12) perpendicular(_d, _p);
-  _p.normalize();
-  arm.used = (arm.used || new THREE.Vector3()).copy(_p);
+  _p.addScaledVector(_d, -_p.dot(_d)).normalize();
 
   // 3. The shoulder: turn the rigid arm so that, in the upper arm's frame,
   // the shoulder -> wrist direction (e1) goes to the target line and the
-  // elbow's side of that line (e2: square to e1 and to the hinge) goes to the
-  // elbow direction. Both frames are completed with a cross product.
+  // elbow's side of it (e2: square to e1 and the hinge) goes to the elbow
+  // direction. Both frames are completed with a cross product.
   _e1.copy(_v1).add(_f2.copy(end.position).applyQuaternion(lower.quaternion)).normalize();
   _e2.crossVectors(_e1, hinge).normalize();
   _m1.makeBasis(_e1, _e2, _e3.crossVectors(_e1, _e2));
   _m2.makeBasis(_d, _p, _e3.crossVectors(_d, _p));
-  _m2.multiply(_m1.transpose());   // upper arm frame -> its frame -> the shoulder's
-  upper.quaternion.setFromRotationMatrix(_m2);
-  upper.updateMatrixWorld(true);
+  _qg.setFromRotationMatrix(_m2.multiply(_m1.transpose()));   // upper arm frame -> shoulder frame
 
+  // 4. Roll limit: if that would roll the upper arm about its length faster
+  // than ROLL_SPEED since last frame, swivel back (about the target line, so
+  // the wrist stays put) until it doesn't.
+  let swivel = 0;
+  if (live) {
+    const limit = ROLL_SPEED * dt;
+    const rollAt = (a) => roll(arm.last, _qt.setFromAxisAngle(_d, a).multiply(_qg), arm.axis);
+    const r0 = rollAt(0);
+    if (Math.abs(r0) > limit) {
+      const want = Math.sign(r0) * limit;
+      for (let i = 0; i < 8; i++) {   // Newton's method on the swivel angle
+        const f = rollAt(swivel) - want;
+        if (Math.abs(f) < 1e-5) break;
+        const slope = (rollAt(swivel + 1e-4) - rollAt(swivel)) / 1e-4;
+        if (Math.abs(slope) < 0.05) break;   // the arm points along the line: swivelling can't help
+        swivel = THREE.MathUtils.clamp(swivel - f / slope, -Math.PI, Math.PI);
+      }
+      if (Math.abs(rollAt(swivel)) > Math.abs(r0)) swivel = 0;
+    }
+  }
+  upper.quaternion.setFromAxisAngle(_d, swivel).multiply(_qg);
+  _p.applyQuaternion(_r.setFromAxisAngle(_d, swivel));
+
+  // Caught up with the animation after the IK has faded: let go.
+  if (weight <= 0 && !elbow && upper.quaternion.angleTo(_qa) < CAUGHT_UP && Math.abs(bend - animBend) < CAUGHT_UP) {
+    upper.quaternion.copy(_qa); lower.quaternion.copy(_qf); upper.updateMatrixWorld(true);
+    resetArm(arm);
+    return null;
+  }
+  arm.last = (arm.last || new THREE.Quaternion()).copy(upper.quaternion);
+  arm.bend = bend;
+  arm.used = (arm.used || new THREE.Vector3()).copy(_p);
+  upper.updateMatrixWorld(true);
   end.getWorldPosition(_W);
-  return _W.distanceTo(target);
+  return target && weight > 0 ? _W.distanceTo(target) : null;
+}
+
+// How far (rad, signed) q1 has turned about axis (a direction in the bone's
+// own frame) since q0.
+function roll(q0, q1, axis) {
+  _dq.copy(q0).invert().multiply(q1);
+  if (_dq.w < 0) _dq.set(-_dq.x, -_dq.y, -_dq.z, -_dq.w);
+  return 2 * Math.atan2(_dq.x * axis.x + _dq.y * axis.y + _dq.z * axis.z, _dq.w);
 }
 
 // Some direction square to d (unit), into out.
