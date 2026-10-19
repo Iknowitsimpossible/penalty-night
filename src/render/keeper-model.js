@@ -161,6 +161,8 @@ export function createKeeperModel(scene, character, clips) {
   //   elbows: { Left, Right } elbow directions stored by a replay, or null
   //         to use (and update) each arm's remembered one
   const _s = new THREE.Vector3(), _t = new THREE.Vector3(), _d = new THREE.Vector3(), _need = new THREE.Vector3(), _g = new THREE.Vector3();
+  const ikBones = ['LeftArm', 'LeftForeArm', 'RightArm', 'RightForeArm', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'RightLeg', 'RightFoot'].map((n) => bone[n]);
+  for (const b of ikBones) b.userData.clipPose = b.quaternion.clone();
   function pose(mixNow, rootPos, ikWeight, corr, gloves, dt, elbows = null) {
     for (const role of CLIP_ROLES) {
       const v = mixNow[role];
@@ -168,7 +170,13 @@ export function createKeeperModel(scene, character, clips) {
       a.setEffectiveWeight(v ? v.w : 0);
       if (v) a.time = clampTime(role, v.t);
     }
+    // The mixer only writes a bone when the clip's value has changed since
+    // last frame, so while the game is paused it would leave last frame's IK
+    // in place and the IK would build on its own result. Put the bones the
+    // IK moves back to the clip's pose first.
+    for (const b of ikBones) b.quaternion.copy(b.userData.clipPose);
     mixer.update(0);
+    for (const b of ikBones) b.userData.clipPose.copy(b.quaternion);
     root.position.copy(rootPos);
     root.updateMatrixWorld(true);
 
