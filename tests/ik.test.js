@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { solveTwoBone, createArm, solveArm, MIN_BEND, MAX_BEND, BEND_SPEED, ROLL_SPEED } from '../src/render/ik.js';
+import { solveTwoBone, createArm, solveArm, MIN_BEND, MAX_BEND, BEND_SPEED, PINNED_BEND_SPEED, ROLL_SPEED } from '../src/render/ik.js';
 
 // A right arm hanging off a rotated, scaled body, like a skinned model's
 // bones: upper arm 0.3, forearm 0.28.
@@ -117,7 +117,7 @@ describe('arm IK', () => {
     expect(worst).toBeLessThan(1e-4);
   });
 
-  it('keeps the elbow between 5 and 140 degrees, never bent backwards', () => {
+  it('keeps the elbow between 5 and 150 degrees, never bent backwards', () => {
     for (const dist of [0.02, 0.06, 0.1, 0.3, 0.488, 0.6, 1.5]) {
       for (const bend of [-0.3, 0, 0.05, 1.2, 2.6]) {
         const a = makeMixamoArm({ bend });
@@ -184,17 +184,21 @@ describe('arm IK', () => {
     expect(a.upper.quaternion.angleTo(fresh.upper.quaternion)).toBeLessThan(0.01);
   });
 
-  it('bends the elbow no faster than BEND_SPEED', () => {
-    const a = makeMixamoArm({ bend: 0.6 });
-    const anim = { upper: a.upper.quaternion.clone(), lower: a.lower.quaternion.clone() };
-    const bends = [];
-    for (let f = 0; f < 30; f++) {
-      a.upper.quaternion.copy(anim.upper); a.lower.quaternion.copy(anim.lower); a.body.updateMatrixWorld(true);
-      solveArm(a.arm, around(a, new THREE.Vector3(1, 0.2, 0), f < 3 ? 0.2 : 0.6), 1, 1 / 60);   // a target that suddenly jumps out of reach
-      bends.push(elbowOf(a).bend);
+  it('bends the elbow no faster than BEND_SPEED, or PINNED_BEND_SPEED at full weight', () => {
+    for (const [weight, speed] of [[0.6, BEND_SPEED], [1, PINNED_BEND_SPEED]]) {
+      const a = makeMixamoArm({ bend: 0.6 });
+      const anim = { upper: a.upper.quaternion.clone(), lower: a.lower.quaternion.clone() };
+      const bends = [];
+      for (let f = 0; f < 40; f++) {
+        a.upper.quaternion.copy(anim.upper); a.lower.quaternion.copy(anim.lower); a.body.updateMatrixWorld(true);
+        solveArm(a.arm, around(a, new THREE.Vector3(1, 0.2, 0), f < 3 ? 0.15 : 1.2), weight, 1 / 60);   // a target that suddenly jumps out of reach
+        bends.push(elbowOf(a).bend);
+      }
+      const steps = bends.slice(1).map((b, f) => Math.abs(b - bends[f]));
+      expect(Math.max(...steps)).toBeLessThanOrEqual(speed / 60 + 1e-6);
+      expect(Math.max(...steps)).toBeGreaterThan(speed / 60 * 0.99);   // it does move at the limit
+      expect(bends[bends.length - 1]).toBeCloseTo(MIN_BEND, 5);   // and gets straight in the end
     }
-    for (let f = 1; f < bends.length; f++) expect(Math.abs(bends[f] - bends[f - 1])).toBeLessThanOrEqual(BEND_SPEED / 60 + 1e-6);
-    expect(bends[bends.length - 1]).toBeCloseTo(MIN_BEND, 5);   // and gets straight in the end
   });
 
   it('after the weight is back to 0, eases back to the animation and then lets go', () => {

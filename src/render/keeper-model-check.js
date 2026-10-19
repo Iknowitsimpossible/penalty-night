@@ -19,7 +19,9 @@ const DEG = 180 / Math.PI;
 //   offHinge: how far the forearm has left the hinge's plane (deg; a real
 //         elbow can't bend sideways)
 //   roll: the upper arm's turn about its own axis since the last frame (rad)
-const _y = new THREE.Vector3(0, 1, 0), _f = new THREE.Vector3(), _dq = new THREE.Quaternion();
+//   behind: how far the upper arm points behind the chest (deg; a shoulder
+//         stretches to about 60 back). Spine2's z axis points out of the chest.
+const _y = new THREE.Vector3(0, 1, 0), _f = new THREE.Vector3(), _dq = new THREE.Quaternion(), _fwd = new THREE.Vector3(), _sq = new THREE.Quaternion();
 function armPose(B, side, prevQ) {
   const sign = side === 'Left' ? 1 : -1;
   _f.copy(_y).applyQuaternion(B[side + 'ForeArm'].quaternion);
@@ -30,7 +32,10 @@ function armPose(B, side, prevQ) {
     _dq.copy(prevQ).invert().multiply(B[side + 'Arm'].quaternion);   // this frame's turn, in the upper arm's frame
     roll = Math.abs(2 * Math.atan2(_dq.y, Math.abs(_dq.w)));         // its twist about y
   }
-  return { bend, offHinge, roll, q: B[side + 'Arm'].quaternion.clone(), elbow: B[side + 'ForeArm'].getWorldPosition(new THREE.Vector3()), shoulder: B[side + 'Arm'].getWorldPosition(new THREE.Vector3()) };
+  const elbow = B[side + 'ForeArm'].getWorldPosition(new THREE.Vector3()), shoulder = B[side + 'Arm'].getWorldPosition(new THREE.Vector3());
+  _fwd.set(0, 0, 1).applyQuaternion(B.Spine2.getWorldQuaternion(_sq));
+  const behind = Math.asin(THREE.MathUtils.clamp(-_fwd.dot(_f.subVectors(elbow, shoulder).normalize()), -1, 1)) * DEG;
+  return { bend, offHinge, roll, behind, q: B[side + 'Arm'].quaternion.clone(), elbow, shoulder };
 }
 
 export function checkKeeperModel(pn, kicks = DEFAULT_KICKS, seed = 11, trace = null) {
@@ -49,7 +54,7 @@ export function checkKeeperModel(pn, kicks = DEFAULT_KICKS, seed = 11, trace = n
     tap(dir, side); tap('ArrowUp', up);
     key('keydown', ' '); pn.step(0.42); key('keyup', ' ');
     const row = { kick: `${dir} x${side} up${up}`, clips: new Set(), slideMax: 0, slideTotal: 0, floatMax: 0, hipsMax: 0, gloveGapAtBall: null, gloveGapMax: 0,
-      pullMax: 0, rollMax: 0, elbowMax: 0, elbowRelMax: 0, bendMin: Infinity, bendMax: -Infinity, bendRateMax: 0, offHingeMax: 0 };
+      pullMax: 0, rollMax: 0, elbowMax: 0, elbowRelMax: 0, bendMin: Infinity, bendMax: -Infinity, bendRateMax: 0, offHingeMax: 0, behindMax: -90 };
     let prev = null;
     for (let i = 0; i < 60 * 5; i++) {
       pn.step(dt);
@@ -86,11 +91,11 @@ export function checkKeeperModel(pn, kicks = DEFAULT_KICKS, seed = 11, trace = n
       for (const a of arms) {
         row.bendMin = Math.min(row.bendMin, a.bend); row.bendMax = Math.max(row.bendMax, a.bend);
         row.offHingeMax = Math.max(row.offHingeMax, a.offHinge);
+        row.behindMax = Math.max(row.behindMax, a.behind);
       }
       if (trace && prev) trace.push({ kick: rows.length, ct: +(st.keeperDive ? st.keeperDive.t : -1).toFixed(3), mode: s.mode, ik: r3(s.ik), corr: r3(s.corr), pull: r3(s.pull),
         ball: st.ball[2] < 0.6,
-        arms: arms.map((a, j) => [Math.round(a.roll * DEG / dt), Math.round(a.bend), Math.round(a.offHinge), +(a.elbow.distanceTo(prev.arms[j].elbow) / dt).toFixed(1),
-          model.arms ? Math.round(model.arms[j ? 'Right' : 'Left'].handBack * DEG) : null]) });
+        arms: arms.map((a, j) => [Math.round(a.roll * DEG / dt), Math.round(a.bend), Math.round(a.offHinge), +(a.elbow.distanceTo(prev.arms[j].elbow) / dt).toFixed(1), Math.round(a.behind)]) });
       prev = { toes, hips, arms };
     }
     rows.push({
@@ -100,7 +105,7 @@ export function checkKeeperModel(pn, kicks = DEFAULT_KICKS, seed = 11, trace = n
       'glove gap at ball m': row.gloveGapAtBall, 'glove gap max m': r3(row.gloveGapMax),
       'ik pull max m': r3(row.pullMax), 'arm roll max °/s': Math.round(row.rollMax), 'elbow max m/s': +row.elbowMax.toFixed(1), 'elbow vs shoulder max m/s': +row.elbowRelMax.toFixed(1),
       'elbow bend °': `${Math.round(row.bendMin)}..${Math.round(row.bendMax)}`, 'elbow bend max °/s': Math.round(row.bendRateMax),
-      'elbow off hinge max °': Math.round(row.offHingeMax),
+      'elbow off hinge max °': Math.round(row.offHingeMax), 'arm behind chest max °': Math.round(row.behindMax),
     });
   }
   return rows;

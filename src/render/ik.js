@@ -112,7 +112,8 @@ export function solveTwoBone(upper, lower, end, target, pole, weight = 1) {
 // picture and noodly arms show:
 //   - The elbow is a hinge. It only bends about `hinge` (an axis in the
 //     upper arm's own frame), between MIN_BEND and MAX_BEND from straight,
-//     and no faster than BEND_SPEED.
+//     and no faster than BEND_SPEED (PINNED_BEND_SPEED once the weight is 1,
+//     so the wrist keeps up with a target that is pinned and moving).
 //   - Bent to that angle, the arm is a rigid shape, turned at the shoulder so
 //     the wrist points at the target. That leaves one free choice: how far
 //     the arm is swivelled about the shoulder -> target line (which way the
@@ -128,9 +129,10 @@ export function solveTwoBone(upper, lower, end, target, pole, weight = 1) {
 // body turning in a dive carries the arm with it. The arm bones are assumed
 // to have no scale of their own (the model's is on the root).
 export const MIN_BEND = THREE.MathUtils.degToRad(5);
-export const MAX_BEND = THREE.MathUtils.degToRad(140);
-export const BEND_SPEED = THREE.MathUtils.degToRad(600);   // per second
-export const ROLL_SPEED = THREE.MathUtils.degToRad(450);   // per second
+export const MAX_BEND = THREE.MathUtils.degToRad(150);
+export const BEND_SPEED = THREE.MathUtils.degToRad(600);          // per second
+export const PINNED_BEND_SPEED = THREE.MathUtils.degToRad(1200);  // per second
+export const ROLL_SPEED = THREE.MathUtils.degToRad(450);          // per second
 const CAUGHT_UP = THREE.MathUtils.degToRad(0.5);
 
 // upper, lower, end: shoulder, elbow and wrist bones. hinge: the elbow's
@@ -180,7 +182,8 @@ export function solveArm(arm, target, weight, dt, elbow = null) {
   _fp.copy(_f2).addScaledVector(hinge, -f2h);
   const cosBend = (dist * dist - _v1.lengthSq() - _f2.lengthSq() - 2 * v1h * f2h) / (2 * _hp.length() * _fp.length());
   let bend = THREE.MathUtils.clamp(Math.acos(THREE.MathUtils.clamp(cosBend, -1, 1)), MIN_BEND, MAX_BEND);
-  if (live) bend = arm.bend + THREE.MathUtils.clamp(bend - arm.bend, -BEND_SPEED * dt, BEND_SPEED * dt);
+  const bendSpeed = weight >= 1 ? PINNED_BEND_SPEED : BEND_SPEED;
+  if (live) bend = arm.bend + THREE.MathUtils.clamp(bend - arm.bend, -bendSpeed * dt, bendSpeed * dt);
   const animBend = signedAngle(_hp, _fp, hinge);
   lower.quaternion.premultiply(_r.setFromAxisAngle(hinge, bend - animBend));
 
