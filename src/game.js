@@ -29,6 +29,7 @@ import { createFeedbackCard } from './ui/feedback-card.js';
 import { createSettingsPanel } from './ui/settings-panel.js';
 import { hubView } from './ui/cup-hub.js';
 import { createHud } from './ui/hud.js';
+import { createModeCarousel } from './ui/mode-carousel.js';
 import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength, reducedMotion } from './ui/settings.js';
 import { TEAMS, createCup, recordResult, currentFixture } from './tournament/cup.js';
 
@@ -683,6 +684,14 @@ function setLevel(name) {
   $('levelNote').textContent = { amateur: 'Easy keeper', pro: 'Sharp keeper', legend: 'Elite keeper' }[name];
 }
 document.querySelectorAll('#levels button').forEach((b) => b.addEventListener('click', () => setLevel(b.dataset.level)));
+// The mode carousel remembers the last mode you picked.
+const modes = createModeCarousel({
+  root: $('picker'), track: $('modeTrack'), cards: [...document.querySelectorAll('#modeTrack .mode')],
+  prev: $('modePrev'), next: $('modeNext'), dots: [...document.querySelectorAll('.mode-dots button')],
+}, {
+  start: +storage.getItem('penaltyNight.mode') || 0,
+  onChange: (i) => { try { storage.setItem('penaltyNight.mode', String(i)); } catch (e) { /* storage unavailable */ } },
+});
 $('kickoff').addEventListener('click', () => { initAudio(); startMatch(quickOpponent()); });
 $('again').addEventListener('click', () => {
   initAudio();
@@ -976,6 +985,7 @@ document.addEventListener('keydown', (e) => {
     else if (k === 'v') { e.preventDefault(); requestReplay(); }
     return;
   }
+  if (match.phase === 'menu' && modes.keydown(e, k)) return;
   keys.keydown(e, k);
 });
 
@@ -1003,6 +1013,7 @@ function showPicker() {
   resetScenery();
   towers.forEach((tw) => { tw.on = 1; });
   $('menu').hidden = false; $('attract').hidden = true; $('picker').hidden = false;
+  modes.layout();   // the cards had no size while the picker was hidden
   if (cam.goal !== 'pick') cam.goal = 'pick';
   showRecord();
 }
