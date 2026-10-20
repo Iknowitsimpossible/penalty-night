@@ -1,6 +1,6 @@
 # Penalty Night
 
-A floodlit penalty shootout in the browser, drawn on a 2D canvas and built
+A floodlit penalty shootout on the Moon (Earth hangs over the far stand), drawn on a 2D canvas and built
 with Vite. The look follows the art direction in
 [`docs/art-direction/concept-v1.html`](docs/art-direction/concept-v1.html).
 Take penalties with a swipe (or the keyboard), then dive to save theirs.

@@ -1,4 +1,4 @@
-// The stadium in the concept's style: night sky, three-tier stands packed
+// The stadium in the concept's style, on the Moon: a starry black sky with Earth, three-tier stands packed
 // with a hazy crowd, floodlights, ad boards, a striped floodlit pitch and
 // its lines. None of it moves, so it is painted once per view and screen
 // size into an offscreen canvas (bakeStadium) and copied every frame.
@@ -10,7 +10,9 @@ import { project, projectPoly } from './projection.js';
 // ------------------------------------------------------------------ layout (metres)
 // Stand tiers as [distance behind the end line at the front, front height,
 // distance at the back, back height], as on the concept page.
-const TIERS = [[6, 1.2, 13, 5.5], [13.5, 6.2, 20, 10.2], [20.5, 10.8, 28, 15.5]];
+// (The top tier is a little flatter than the concept's, to open a strip of
+// sky above the stands for Earth in the shooting view.)
+const TIERS = [[6, 1.2, 13, 5.5], [13.5, 6.2, 20, 10.2], [20.5, 10.8, 28, 13.2]];
 export const FAR_Z = 30;          // the far end line: a compact floodlit ground
 const SIDE_X = 34;                // touchlines
 const END_W = 70;                 // half-width of the end stands
@@ -72,6 +74,144 @@ export const TOWERS = [[-27, 14, -30], [27, 14, -30], [-27, 17, FAR_Z + 32], [27
 // three bands, each band in this many pieces along the stand, every piece
 // bobbing on its own beat.
 const BANDS = 3, PIECES = 8;
+
+// ------------------------------------------------------------------ the sky
+// The stadium stands on the Moon: a black sky full of stars with a faint
+// Milky Way, grey cratered ground beyond the stands, and Earth hanging
+// over the far side. Painted first, so the stands cover whatever is low.
+function paintMoonSky(c, cam, w, h, stands) {
+  const rnd = seeded(31);
+  // no air, so no blue: near-black, warmed only by the floodlights low down
+  const sky = c.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, '#000003'); sky.addColorStop(0.5, '#03050d'); sky.addColorStop(1, '#0c1226');
+  c.fillStyle = sky; c.fillRect(0, 0, w, h);
+
+  // the Milky Way: a soft diagonal band of glow packed with fine stars
+  const bx0 = -0.1 * w, by0 = 0.42 * h, bx1 = 1.1 * w, by1 = -0.05 * h;
+  const bl = Math.hypot(bx1 - bx0, by1 - by0), ang = Math.atan2(by1 - by0, bx1 - bx0);
+  c.save();
+  c.translate((bx0 + bx1) / 2, (by0 + by1) / 2); c.rotate(ang); c.scale(1, 0.16);
+  const g = c.createRadialGradient(0, 0, 0, 0, 0, bl / 2);
+  g.addColorStop(0, 'rgba(170,180,255,0.16)'); g.addColorStop(0.5, 'rgba(120,130,210,0.07)'); g.addColorStop(1, 'rgba(120,130,210,0)');
+  c.fillStyle = g; c.fillRect(-bl / 2, -bl / 2, bl, bl);
+  c.restore();
+  const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+  c.fillStyle = '#dfe6ff';
+  for (let i = 0; i < 700; i++) {
+    const t = rnd(), off = gauss() * 0.06 * bl;
+    const x = bx0 + (bx1 - bx0) * t - Math.sin(ang) * off, y = by0 + (by1 - by0) * t + Math.cos(ang) * off;
+    c.globalAlpha = 0.15 + rnd() * 0.45;
+    c.fillRect(x, y, 0.9, 0.9);
+  }
+  // the brighter stars, a few tinted and a few with a glint
+  const tints = ['#ffffff', '#ffffff', '#ffffff', '#cfe0ff', '#ffe9c4'];
+  for (let i = 0; i < 260; i++) {
+    const x = rnd() * w, y = rnd() * h * 0.7, big = rnd() < 0.06, a = 0.25 + rnd() * 0.65;
+    c.globalAlpha = a; c.fillStyle = tints[(rnd() * tints.length) | 0];
+    const r = big ? 1.3 : 0.4 + rnd() * 0.6;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    if (big) { c.globalAlpha = a * 0.5; c.fillRect(x - 4, y - 0.3, 8, 0.6); c.fillRect(x - 0.3, y - 4, 0.6, 8); }
+  }
+  c.globalAlpha = 1;
+
+  // the lunar ground out to the horizon, with craters near it
+  const far = project(cam, cam.eye.x + cam.fwd[0] * 4000, 0, cam.eye.z + cam.fwd[2] * 4000);
+  const hy = far ? far.y : h * 0.5;
+  if (hy < h) {
+    const ground = c.createLinearGradient(0, hy, 0, h);
+    ground.addColorStop(0, '#3a3d47'); ground.addColorStop(0.08, '#24262e'); ground.addColorStop(1, '#14151a');
+    c.fillStyle = ground; c.fillRect(0, hy, w, h - hy);
+    for (let i = 0; i < 40; i++) {
+      const x = rnd() * w, d = rnd(), y = hy + 2 + d * d * Math.min(h - hy, 120), rx = 4 + d * 40 + rnd() * 10;
+      c.globalAlpha = 0.5;
+      c.fillStyle = '#0d0e12'; c.beginPath(); c.ellipse(x, y, rx, rx * 0.18, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#4a4d58'; c.beginPath(); c.ellipse(x + rx * 0.1, y + rx * 0.05, rx * 0.95, rx * 0.15, 0, 0, Math.PI); c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+
+  // Earth, over the far side: sitting just above the stands, or rising
+  // from behind them when the stands reach high on the screen. A third of
+  // the way across, clear of the scoreboard, the floodlights and the
+  // settings button.
+  const r = Math.max(16, Math.min(42, Math.min(w, h) * 0.05));
+  // How high the stands reach at a screen column: paint every tier (side
+  // stands too) into a small mask and look for the first covered pixel.
+  // (Working it out from the top edges alone misses stands that run past
+  // the camera, whose nearest part towers over everything.)
+  const K = 4, mw = Math.max(1, Math.ceil(w / K)), mh = Math.max(1, Math.ceil(h / K));
+  const mask = document.createElement('canvas');
+  mask.width = mw; mask.height = mh;
+  const m = mask.getContext('2d');
+  m.setTransform(1 / K, 0, 0, 1 / K, 0, 0);
+  m.fillStyle = '#fff';
+  for (const st of stands) {
+    for (const [d0, y0, d1, y1] of TIERS) {
+      const poly = projectPoly(cam, [st.at(-1, d0 - 0.3, y0 - 0.6), st.at(1, d0 - 0.3, y0 - 0.6), st.at(1, d1, y1), st.at(-1, d1, y1)]);
+      if (poly.length < 3) continue;
+      m.beginPath(); poly.forEach(([x, y], i) => (i ? m.lineTo(x, y) : m.moveTo(x, y))); m.closePath(); m.fill();
+    }
+  }
+  const standTop = (x) => {
+    let top = hy;
+    for (let cx = Math.floor((x - r) / K); cx <= Math.ceil((x + r) / K); cx++) {
+      if (cx < 0 || cx >= mw) continue;
+      const col = m.getImageData(cx, 0, 1, mh).data;
+      for (let y = 0; y < mh; y++) if (col[y * 4 + 3] > 0) { top = Math.min(top, y * K); break; }
+    }
+    return top;
+  };
+  // the left third if it has room for Earth (it does in the match views),
+  // otherwise the right third (a side-on replay looking along a tall stand)
+  let ex = w * 0.29, top = standTop(ex);
+  if (top < r * 2.2) {
+    const alt = standTop(w * 0.7);
+    if (alt > top) { ex = w * 0.7; top = alt; }
+  }
+  drawEarth(c, ex, Math.max(top - r * 0.55, r * 0.9), r);
+}
+
+// A small Earth: blue oceans, green and tan land, swirls of cloud, an
+// ice cap, the night side in shadow and a thin glow of atmosphere.
+function drawEarth(c, x, y, r) {
+  const rnd = seeded(23);
+  const glow = c.createRadialGradient(x, y, r * 0.9, x, y, r * 1.7);
+  glow.addColorStop(0, 'rgba(120,180,255,0.35)'); glow.addColorStop(1, 'rgba(120,180,255,0)');
+  c.fillStyle = glow; c.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+  c.save();
+  c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.clip();
+  const sea = c.createRadialGradient(x + r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+  sea.addColorStop(0, '#5aaeff'); sea.addColorStop(0.55, '#1f63c9'); sea.addColorStop(1, '#0a2a66');
+  c.fillStyle = sea; c.fillRect(x - r, y - r, r * 2, r * 2);
+  // land: a few lumpy blobs
+  for (const [ux, uy, s, col] of [[-0.35, -0.2, 0.42, '#4e9a50'], [0.25, 0.15, 0.36, '#b89a63'], [0.45, -0.45, 0.22, '#5aa05a'], [-0.1, 0.55, 0.28, '#4e9a50']]) {
+    c.beginPath();
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2, k = s * r * (0.7 + rnd() * 0.5);
+      const px = x + ux * r + Math.cos(a) * k, py = y + uy * r + Math.sin(a) * k * 0.8;
+      i ? c.lineTo(px, py) : c.moveTo(px, py);
+    }
+    c.closePath(); c.fillStyle = col; c.fill();
+  }
+  // clouds and the ice cap
+  c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineCap = 'round';
+  for (let i = 0; i < 7; i++) {
+    c.lineWidth = r * (0.05 + rnd() * 0.06);
+    const cx = x + (rnd() - 0.5) * r * 1.6, cy = y + (rnd() - 0.5) * r * 1.6, rr = r * (0.2 + rnd() * 0.35), a0 = rnd() * Math.PI * 2;
+    c.beginPath(); c.arc(cx, cy, rr, a0, a0 + 1 + rnd() * 1.5); c.stroke();
+  }
+  c.fillStyle = 'rgba(255,255,255,0.85)';
+  c.beginPath(); c.ellipse(x, y - r * 0.95, r * 0.5, r * 0.18, 0, 0, Math.PI * 2); c.fill();
+  // the night side: the Sun is off to the upper right
+  const night = c.createLinearGradient(x + r * 0.7, y - r * 0.5, x - r * 0.9, y + r * 0.6);
+  night.addColorStop(0, 'rgba(0,4,16,0)'); night.addColorStop(0.42, 'rgba(0,4,16,0)');
+  night.addColorStop(0.62, 'rgba(0,4,16,0.82)'); night.addColorStop(1, 'rgba(0,2,8,0.95)');
+  c.fillStyle = night; c.fillRect(x - r, y - r, r * 2, r * 2);
+  c.restore();
+  // a thin bright rim of atmosphere on the lit side
+  c.strokeStyle = 'rgba(170,215,255,0.7)'; c.lineWidth = Math.max(1, r * 0.05);
+  c.beginPath(); c.arc(x, y, r, -Math.PI * 0.95, Math.PI * 0.2); c.stroke();
+}
 
 // ------------------------------------------------------------------ bake
 // cam: from views.js. w, h: CSS pixels. dpr: device pixel ratio.
@@ -153,15 +293,7 @@ export function bakeStadium(cam, w, h, dpr, opts) {
   const paintBack = (L, collect) => {
     c = L.ctx;
     const rnd = seeded(7);
-    const sky = c.createLinearGradient(0, 0, 0, h);
-    sky.addColorStop(0, '#02040b'); sky.addColorStop(0.55, '#0a1330'); sky.addColorStop(1, '#16224a');
-    c.fillStyle = sky; c.fillRect(0, 0, w, h);
-    c.fillStyle = '#ffffff';
-    for (let i = 0; i < 160; i++) {
-      c.globalAlpha = 0.2 + rnd() * 0.5;
-      c.fillRect(rnd() * w, rnd() * h * 0.22, 1.4, 1.4);
-    }
-    c.globalAlpha = 1;
+    paintMoonSky(c, cam, w, h, stands);
     for (const st of ends) {
       drawStand(st, rnd, collect ? (hd) => {
         let list = tileHeads.get(hd.key);
