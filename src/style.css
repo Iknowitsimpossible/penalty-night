@@ -162,31 +162,101 @@ h1.mid { font-size: clamp(30px, 6.5vw, 48px); }
 .tap.show { opacity: 1; animation: breathe 1.8s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.35; } }
 
+/* Mode picker: arcade tiles. Each tile has a solid icon badge, a title, a line
+   of detail and a chunky PLAY bar with a "pressed" bottom edge. */
 .picker {
-  position: absolute; left: 50%; bottom: calc(9vh + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
-  width: min(760px, calc(100% - 32px)); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start;
+  position: absolute; left: 50%; bottom: calc(7vh + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  width: min(780px, calc(100% - 32px)); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch;
 }
-.picker .brand { grid-column: 1 / -1; justify-self: center; font: 900 15px var(--display); letter-spacing: 0.5em; margin-right: -0.5em; text-transform: uppercase; color: rgba(238, 241, 248, 0.75); }
-.pick-col { display: grid; gap: 8px; min-width: 0; }
-.pick {
-  position: relative; display: grid; justify-items: start; gap: 6px; text-align: left; cursor: pointer;
-  padding: 20px 20px 18px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.16); color: var(--ink);
-  background: linear-gradient(160deg, rgba(20, 26, 46, 0.86), rgba(8, 12, 24, 0.92));
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45); transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+.picker .brand {
+  grid-column: 1 / -1; justify-self: center; padding: 6px 16px 6px calc(16px + 0.5em); border-radius: 999px;
+  font: 900 13px var(--display); letter-spacing: 0.5em; text-transform: uppercase; color: var(--flood);
+  background: rgba(4, 7, 16, 0.78); border: 1px solid rgba(246, 231, 168, 0.25);
+}
+.tile {
+  position: relative; display: grid; grid-template-rows: auto 1fr auto; gap: 14px; padding: 18px; border-radius: 16px;
+  background: linear-gradient(165deg, rgba(28, 36, 62, 0.95), rgba(9, 13, 26, 0.96) 60%);
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 18px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   animation: lift 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-.pick-col:nth-child(3) .pick { animation-delay: 0.08s; }
+.tile:hover, .tile:focus-within { transform: translateY(-4px); border-color: rgba(242, 194, 48, 0.7); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 36px rgba(242, 194, 48, 0.22); }
+.tile.cup { background: linear-gradient(165deg, rgba(86, 64, 12, 0.95), rgba(22, 16, 6, 0.96) 62%); border-color: rgba(242, 194, 48, 0.4); animation-delay: 0.08s; }
 @keyframes lift { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
-.pick:hover, .pick:focus-visible { transform: translateY(-4px); border-color: var(--you); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--you), 0 0 40px rgba(242, 194, 48, 0.18); }
-.pick svg { width: 38px; height: 38px; fill: none; stroke: var(--you); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.pick b { font: 900 clamp(20px, 3vw, 28px)/1 var(--display); letter-spacing: -0.01em; text-transform: uppercase; }
-.pick small { font: 500 12px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
-.pick .go-arrow { position: absolute; right: 18px; top: 18px; font: 900 22px var(--display); color: var(--you); }
-.pick.cup { background: linear-gradient(160deg, rgba(64, 50, 10, 0.9), rgba(16, 13, 6, 0.94)); border-color: rgba(242, 194, 48, 0.45); }
-.picker .levels { gap: 4px; }
-.picker .levels button { font-size: 11px; padding: 8px 2px 7px; min-height: 40px; background: rgba(8, 12, 24, 0.7); }
-.picker .levels button[aria-pressed="true"] { background: var(--flood); color: var(--night); border-color: var(--flood); }
-.picker .levelNote { margin: 0; min-height: 0; font-size: 12px; text-align: center; }
+.tile-head { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 14px; }
+.tile-text { display: grid; gap: 4px; min-width: 0; text-align: left; }
+.tile-text b { font: 900 clamp(19px, 2.6vw, 26px)/1 var(--display); text-transform: uppercase; letter-spacing: -0.01em; color: var(--ink); }
+.tile-text small { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.tile-note { margin: 0; align-self: center; font-size: 14px; line-height: 1.4; color: rgba(238, 241, 248, 0.72); }
+
+/* Solid icon badges: a gold squircle with a dark pictogram. */
+.badge-icon {
+  display: grid; place-items: center; width: 54px; height: 54px; border-radius: 16px; flex: none;
+  background: linear-gradient(160deg, #ffe07a, #f2c230 45%, #c98f0e);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25), inset 0 2px 0 rgba(255, 255, 255, 0.45), 0 6px 16px rgba(242, 194, 48, 0.25);
+}
+.badge-icon svg { width: 70%; height: 70%; }
+.badge-icon .fill { fill: #15161b; }
+.badge-icon .cut { fill: #f2c230; }
+.badge-icon .line { fill: none; stroke: #15161b; stroke-width: 3; stroke-linecap: round; }
+.badge-icon .seam { fill: none; stroke: #f2c230; stroke-width: 2.2; stroke-linecap: round; }
+.badge-icon.small { width: 42px; height: 42px; border-radius: 12px; }
+.badge-icon.teal { background: linear-gradient(160deg, #8ff0e2, #2fc6b4 45%, #138a7c); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25), inset 0 2px 0 rgba(255, 255, 255, 0.45), 0 6px 16px rgba(47, 198, 180, 0.25); }
+.badge-icon.teal .cut { fill: #2fc6b4; }
+
+/* Difficulty: a segmented pill, one to three stars */
+.picker .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 3px; border-radius: 12px; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.08); }
+.picker .levels button {
+  display: grid; justify-items: center; gap: 1px; min-height: 44px; padding: 5px 2px; border: 0; border-radius: 9px;
+  font: 700 11px var(--display); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); background: transparent; cursor: pointer;
+}
+.picker .levels button i { font-style: normal; font-size: 11px; letter-spacing: 0.1em; color: rgba(242, 194, 48, 0.55); }
+.picker .levels button:hover { color: var(--ink); }
+.picker .levels button[aria-pressed="true"] { background: linear-gradient(180deg, #2b3555, #1b2340); color: var(--ink); box-shadow: inset 0 0 0 1px rgba(242, 194, 48, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4); }
+.picker .levels button[aria-pressed="true"] i { color: #f2c230; text-shadow: 0 0 8px rgba(242, 194, 48, 0.7); }
+
+/* The PLAY bar: bright, chunky, presses in */
+.play {
+  display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 50px; cursor: pointer;
+  font: 900 20px var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: #15161b;
+  background: linear-gradient(180deg, #ffd95e, #f2c230 55%, #e0a90f); border: 0; border-radius: 12px;
+  box-shadow: 0 5px 0 #8a6205, 0 8px 18px rgba(0, 0, 0, 0.45), inset 0 2px 0 rgba(255, 255, 255, 0.5);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
+}
+.play span { font-size: 14px; }
+.play:hover { filter: brightness(1.08); }
+.play:active { transform: translateY(4px); box-shadow: 0 1px 0 #8a6205, 0 3px 8px rgba(0, 0, 0, 0.45), inset 0 2px 0 rgba(255, 255, 255, 0.5); }
+
+/* Practice and keeper training: smaller tiles in one row */
+.train-row { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.mini {
+  position: relative; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer;
+  border-radius: 14px; border: 2px solid rgba(255, 255, 255, 0.1); color: var(--ink); text-align: left;
+  background: linear-gradient(165deg, rgba(24, 31, 54, 0.94), rgba(9, 13, 26, 0.95));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), 0 12px 30px rgba(0, 0, 0, 0.45);
+  animation: lift 0.55s 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both; transition: transform 0.18s ease, border-color 0.18s ease;
+}
+.mini .tile-text b { font-size: 16px; }
+.mini:hover, .mini:focus-visible { transform: translateY(-3px); border-color: rgba(47, 198, 180, 0.7); }
+.mini.keeper:hover, .mini.keeper:focus-visible { border-color: rgba(242, 194, 48, 0.7); }
+.mini .tag {
+  position: absolute; right: -6px; top: -9px; padding: 4px 10px 3px; border-radius: 999px; transform: rotate(4deg);
+  font: 900 10px var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: #06231f;
+  background: linear-gradient(180deg, #8ff0e2, #2fc6b4); box-shadow: 0 3px 0 #127466, 0 6px 14px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 640px) {
+  .picker { grid-template-columns: 1fr; gap: 10px; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  .tile { padding: 14px; gap: 10px; grid-template-rows: auto; }
+  .tile-note { display: none; }
+  .badge-icon { width: 46px; height: 46px; border-radius: 14px; }
+  .play { min-height: 44px; font-size: 17px; }
+  .train-row { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .mini { grid-template-columns: 1fr; justify-items: start; gap: 6px; padding: 10px 12px; }
+  .mini .tile-text small { font-size: 10px; letter-spacing: 0.06em; text-wrap: balance; }
+  .picker .brand { display: none; }   /* the title screen already showed it; phones need the room */
+}
 .corner { position: absolute; left: 16px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); margin: 0; font: 500 11px var(--mono); letter-spacing: 0.1em; color: var(--muted); }
 
 /* First-kick coach: a glowing fingertip traces a curved swipe. */
@@ -198,12 +268,8 @@ h1.mid { font-size: clamp(30px, 6.5vw, 48px); }
   offset-path: path('M60 205 C 95 150, 80 80, 38 12'); offset-rotate: 0deg; animation: trace 1.6s cubic-bezier(0.5, 0, 0.3, 1) infinite;
 }
 @keyframes trace { 0% { offset-distance: 0%; opacity: 0; } 12% { opacity: 1; } 80% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
-@media (max-width: 640px) {
-  .picker { grid-template-columns: 1fr; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
-  .pick { padding: 16px; }
-}
 @media (prefers-reduced-motion: reduce) {
-  .logo { transition: none; } .logo-main, .tap.show, .pick, #coach .tip { animation: none; } .pick { transition: none; }
+  .logo { transition: none; } .logo-main, .tap.show, .tile, .mini, #coach .tip { animation: none; } .tile, .mini, .play { transition: none; }
 }
 .final { margin: 0; font-family: var(--mono); font-weight: 700; font-size: 40px; color: var(--flood); text-align: center; font-variant-numeric: tabular-nums; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -342,23 +408,6 @@ kbd { font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--l
 }
 
 /* Practice */
-.train-row { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-@media (max-width: 640px) { .train-row { grid-template-columns: 1fr; gap: 8px; } }
-.practice-btn {
-  position: relative; display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 4px 12px;
-  text-align: left; cursor: pointer; padding: 14px 18px; min-height: 52px; border-radius: 10px; color: var(--ink);
-  border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(8, 12, 24, 0.78);
-  animation: lift 0.55s 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both; transition: border-color 0.18s ease;
-}
-.practice-btn:hover, .practice-btn:focus-visible { border-color: var(--cpu); }
-.practice-btn b { font: 900 16px var(--display); text-transform: uppercase; letter-spacing: 0.02em; }
-.practice-btn small { font: 500 12px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-.practice-btn .badge {
-  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
-  font: 700 10px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--night);
-  background: var(--cpu); border-radius: 999px; padding: 4px 9px;
-}
-@media (max-width: 420px) { .practice-btn small { grid-column: 1 / -1; } .practice-btn .badge { top: 14px; transform: none; } }
 .practice-panel {
   position: absolute; left: 0; right: 0; margin-inline: auto; top: 12px; box-sizing: border-box;
   width: min(420px, calc(100% - 136px)); display: grid; justify-items: center; gap: 4px; text-align: center;
@@ -377,7 +426,6 @@ kbd { font: 500 10px var(--mono); color: var(--muted); border: 1px solid var(--l
   #diveMeter, #powerMeter, #feedback { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 }
 
-.practice-btn.keeper:hover, .practice-btn.keeper:focus-visible { border-color: var(--you); }
 
 /* Keeper positioning: hold to step along the line until the plant foot. */
 #stepper {

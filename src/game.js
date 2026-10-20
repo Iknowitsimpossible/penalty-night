@@ -1146,6 +1146,7 @@ function render() {
   view.setView(cam.view);
   frameState.time = time;
   frameState.ball.roll = ball.roll;
+  frameState.ball.visible = cam.goal !== 'pick';   // the menu tiles cover the spot: no ball peeking between them
   frameState.goalFade = goalFade;
   frameState.shake = cam.jolt;
   view.render(frameState);
