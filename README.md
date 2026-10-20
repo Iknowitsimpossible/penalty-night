@@ -4,16 +4,18 @@ A floodlit penalty shootout on the Moon, in the browser. Take penalties with
 a swipe (or the keyboard), then dive to save theirs. Quick matches, an
 eight-team cup, practice lessons and keeper training.
 
+**[Play it here](https://iknowitsimpossible.github.io/penalty-night/)** (phone or computer, no install).
+
 This project expands on my CMU 15-112 mini project.
 
-## Run it
+## Run it yourself
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm test           # unit tests
-npm run build      # production build in dist/
+npm run dev
 ```
+
+Then open the address it prints. `npm test` runs the unit tests.
 
 ## Controls
 
