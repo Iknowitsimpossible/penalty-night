@@ -4,7 +4,7 @@
 // (the painter's algorithm), then markers and effects on top.
 import { viewCamera } from './views.js';
 import { project } from './projection.js';
-import { bakeStadium, drawNet, drawFrame } from './stadium.js';
+import { bakeStadium, drawNet, drawFrame, drawTowers } from './stadium.js';
 import { bodyPose, kitFor, drawShadedFigure } from './figures.js';
 import { drawBall, drawBallShadow, drawGroundShadow } from './ball.js';
 
@@ -15,19 +15,37 @@ export function createRenderer2D(canvas) {
   const ctx = canvas.getContext('2d');
   let w = 1, h = 1, dpr = 1;
   let view = 'menu', cam = viewCamera(view, w, h);
-  let cpuColor = '#2fc6b4', lights = 1;
+  let cpuColor = '#2fc6b4';
   const bakes = new Map();
 
-  const bakeKey = () => `${view}|${w}x${h}@${dpr}|${cpuColor}|${lights > 0.5 ? 1 : 0}`;
+  // The stadium for this view, size and opponent, painted once (stadium.js).
+  const bakeKey = () => `${view}|${w}x${h}@${dpr}|${cpuColor}`;
   function background() {
     const key = bakeKey();
     let b = bakes.get(key);
     if (!b) {
-      if (bakes.size > 8) bakes.clear();
-      b = bakeStadium(cam, w, h, dpr, { view, cpuColor, lights });
+      if (bakes.size > 6) bakes.clear();
+      b = bakeStadium(cam, w, h, dpr, { view, cpuColor });
       bakes.set(key, b);
     }
     return b;
+  }
+
+  // The stands: still, or (while an end cheers) without their crowd, which
+  // is then stamped back in small pieces that bob on their own beats.
+  function stands(b, f, jx, jy) {
+    const cheer = f.cheer || { you: 0, cpu: 0 };
+    if (Math.max(cheer.you, cheer.cpu) < 0.01) {
+      ctx.drawImage(b.back, jx - 2, jy - 2, w + 4, h + 4);   // a little bleed so a shake shows no edge
+      return;
+    }
+    ctx.drawImage(b.bare, jx - 2, jy - 2, w + 4, h + 4);
+    const t = f.time || 0;
+    for (const tile of b.tiles) {
+      const amt = tile.side === 'you' ? cheer.you : cheer.cpu;
+      const hop = Math.max(0, Math.sin(t * 11 + tile.phase)) * 0.28 * amt * tile.s;
+      ctx.drawImage(tile.canvas, tile.x + jx, tile.y + jy - hop, tile.w, tile.h);
+    }
   }
 
   // A ring in the goal mouth: the keyboard target, the hover preview, the dive pulse.
@@ -48,7 +66,6 @@ export function createRenderer2D(canvas) {
     get size() { return { w, h, dpr }; },
     setView(name) { if (name !== view) { view = name; cam = viewCamera(view, w, h); } },
     setCpuColor(hex) { cpuColor = hex; },
-    setLights(on) { lights = on; },
     rebake() { bakes.clear(); },
     resize(cw, ch, ratio) {
       // A hidden container reports 0x0; keep the last good size.
@@ -59,14 +76,21 @@ export function createRenderer2D(canvas) {
       cam = viewCamera(view, w, h);
     },
 
-    // f: { figures: [{ body, role, fwd, kneeOut }], ball: { pos, roll, visible }, net,
+    // f: { time, cheer: { you, cpu }, towers: [{ shown, flare }], figures: [{ body, role, fwd, kneeOut }], ball: { pos, roll, visible }, net,
     //      goalFade (0..1: the goal is in front of the camera, so it fades), markers: [...], shake: [dx, dy], under(ctx, cam), over(ctx, cam) }
     render(f) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
       const [jx, jy] = f.shake || [0, 0];
-      ctx.drawImage(background(), jx - 2, jy - 2, w + 4, h + 4);   // a little bleed so a shake shows no edge
+      const b = background();
+      stands(b, f, jx, jy);
+      ctx.drawImage(b.front, jx - 2, jy - 2, w + 4, h + 4);
       ctx.translate(jx, jy);
+      // floodlights: the stadium is dark until they are on (the title sequence)
+      const towers = f.towers || [];
+      const lit = towers.length ? towers.reduce((a, t) => a + t.shown, 0) / towers.length : 1;
+      if (lit < 0.999) { ctx.globalAlpha = (1 - lit) * 0.72; ctx.fillStyle = '#02040c'; ctx.fillRect(-4, -4, w + 8, h + 8); ctx.globalAlpha = 1; }
+      drawTowers(ctx, cam, towers);
       if (f.under) f.under(ctx, cam);
 
       // gather everything that has to be sorted by distance
@@ -81,10 +105,10 @@ export function createRenderer2D(canvas) {
         drawGroundShadow(ctx, cam, bp.foot.x, bp.foot.z, bp.foot.half + 0.22, 0.3, 0.38 * fade);
         drawGroundShadow(ctx, cam, bp.foot.x + 0.7, bp.foot.z - 0.4, bp.foot.half + 0.18, 0.24, 0.2 * fade);
       }
-      const b = f.ball;
-      if (b && b.visible !== false) {
-        drawBallShadow(ctx, cam, b.pos);
-        items.push({ d: depth(cam, b.pos.x, b.pos.y, b.pos.z), draw: () => drawBall(ctx, cam, b.pos, b.roll) });
+      const ball = f.ball;
+      if (ball && ball.visible !== false) {
+        drawBallShadow(ctx, cam, ball.pos);
+        items.push({ d: depth(cam, ball.pos.x, ball.pos.y, ball.pos.z), draw: () => drawBall(ctx, cam, ball.pos, ball.roll) });
       }
       const fade = f.goalFade || 0;
       items.push({ d: depth(cam, 0, 1.2, -1.6), draw: () => drawNet(ctx, cam, f.net, 1 - 0.76 * fade) });

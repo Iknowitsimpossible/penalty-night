@@ -38,9 +38,13 @@ export function viewCamera(name, w, h) {
   }
   if (name === 'pick') return makeCamera({ x: 0, y: 1.32, z: 15.6 }, { x: 0, y: 1.25, z: 0 }, f, w / 2, h / 2);
   if (name === 'replayL' || name === 'replayR') {
-    // low and to the side the ball went, so the whole flight from spot to goal is in shot
+    // Low and to the side the ball went, square to the flight, so the
+    // spot, the keeper and the whole goal are in shot. The lens is the
+    // tighter of a normal one and one that still fits about 23 degrees
+    // either side (the spot and the far post), so it also works upright.
     const side = name === 'replayR' ? 1 : -1;
-    return makeCamera({ x: side * 9, y: 1.6, z: 5.5 }, { x: side * 0.8, y: 1, z: 4 }, focal(h, fov * 0.8), w / 2, h / 2);
+    const lens = Math.min(focal(h, fov * 0.8), (w / 2) / Math.tan((23 * Math.PI) / 180));
+    return makeCamera({ x: side * 18, y: 1.8, z: 6 }, { x: side * 0.5, y: 0.9, z: 4.9 }, lens, w / 2, h * 0.55);
   }
   throw new Error(`unknown view ${name}`);
 }

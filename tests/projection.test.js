@@ -82,6 +82,19 @@ describe('tap to goal (the inverse projection)', () => {
     }
   });
 
+  it('frames the spot and both posts in the replay side views', () => {
+    for (const [w, h] of [[1280, 800], [375, 812]]) {
+      for (const name of ['replayL', 'replayR']) {
+        const cam = viewCamera(name, w, h);
+        for (const [x, y, z] of [[0, 0, 11], [-HALF, GOAL_H, 0], [HALF, GOAL_H, 0], [HALF, 0, 0], [-HALF, 0, 0]]) {
+          const p = project(cam, x, y, z);
+          expect(p.x).toBeGreaterThan(0); expect(p.x).toBeLessThan(w);
+          expect(p.y).toBeGreaterThan(0); expect(p.y).toBeLessThan(h);
+        }
+      }
+    }
+  });
+
   it('stays finite after a 0x0 resize (hidden container)', () => {
     for (const name of VIEWS) {
       const cam = viewCamera(name, 0, 0);

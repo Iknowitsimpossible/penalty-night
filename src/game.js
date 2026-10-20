@@ -58,7 +58,7 @@ const view = createRenderer2D(canvas);
 const scene = new THREE.Scene();
 const net = createNet();
 const cheer = { you: 0, cpu: 0 };   // how loudly each end is celebrating, 0..1
-const towers = [0, 1, 2, 3].map(() => ({ on: 1 }));
+const towers = [0, 1, 2, 3].map(() => ({ on: 1, shown: 1, flare: 0 }));   // floodlights (view2d/stadium.js TOWERS)
 const lighten = (hex, t) => new THREE.Color(hex).lerp(new THREE.Color(0xffffff), t).getHex();
 // The camera director (view2d/director.js) picks the shot and cuts between them.
 const cam = createDirector();
@@ -1112,12 +1112,22 @@ function tick(dt) {
     if (intro.t > 2.5) $('logo').classList.add('show');
     if (intro.t > 3.6) $('tapToPlay').classList.add('show');
   }
+  updateTowers(dt);
   cam.update(dt, time, { reduced: motionReduced });
   // Keeper view: fade the goal that stands in front of the camera and highlight the ball.
   // (The shots cut rather than glide, so the fade switches with them.)
   const keeperView = cam.goal === 'keeper' ? 1 : 0;
   goalFade = keeperView;
   ballTracking.update(ball.pos, ball.moving && !replays.playing, 0.45 + 0.55 * keeperView, dt);
+}
+
+// The moment a floodlight bangs on it flares, then settles.
+function updateTowers(dt) {
+  for (const t of towers) {
+    if (t.on > t.shown + 0.5) t.flare = 1;
+    t.shown = t.on;
+    t.flare *= Math.exp(-dt * 3);
+  }
 }
 
 // ------------------------------------------------------------------ drawing (view2d/renderer.js)
@@ -1128,12 +1138,12 @@ const FIGURES = [
   { body: striker, role: 'youTaker', fwd: -1, kneeOut: 0.015 },
 ];
 const frameState = {
-  figures: FIGURES, ball: { pos: ball.pos, roll: 0 }, net, goalFade: 0, markers: [cornerHint, pulse.sprite, marker], shake: null,
+  time: 0, cheer, towers, figures: FIGURES, ball: { pos: ball.pos, roll: 0 }, net, goalFade: 0, markers: [cornerHint, pulse.sprite, marker], shake: null,
   over: (ctx, c) => { ballTracking.draw(ctx, c, ball.pos); effects.draw(ctx, c); },
 };
 function render() {
   view.setView(cam.view);
-  view.setLights(towers.reduce((a, t) => a + t.on, 0) / towers.length);
+  frameState.time = time;
   frameState.ball.roll = ball.roll;
   frameState.goalFade = goalFade;
   frameState.shake = cam.jolt;
@@ -1194,6 +1204,7 @@ if (import.meta.env.DEV) {
     },
     get paused() { return paused; },
     dive: (x, y) => diveTo(x, y),
+    intro: () => startIntro(),
     get plan() { return match.plan && { ...match.plan }; },
     get training() { return trainingStage && { ...trainingStage }; },
     get homeX() { return keeper.homeX; },

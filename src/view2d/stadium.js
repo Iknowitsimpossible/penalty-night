@@ -39,16 +39,58 @@ export function mix(a, b, t) {
 // the stand behind the goal, so that end (and its boards) are left out.
 const showsNearEnd = (view) => view !== 'keeper';
 
+// Each stand: `at(u, d, y)` places a point u along it (-1..1), d metres
+// back from its front line, at height y. End stands lean toward a side's
+// fans by half; the side stands are mixed.
+function standsFor(view) {
+  const endStand = (sign, lineZ) => ({
+    at: (u, d, y) => [u * END_W, y, lineZ + sign * d],
+    len: END_W * 2, kind: 'end', lean: (u) => (u * sign < 0 ? 'you' : 'cpu'),
+    centre: [0, 8, lineZ + sign * 16],
+  });
+  const sideStand = (sign) => ({
+    at: (u, d, y) => [sign * (SIDE_X + d), y, (FAR_Z - 6) / 2 + u * (FAR_Z + 6) / 2],
+    len: FAR_Z + 6, kind: 'side', lean: () => 'mix',
+    centre: [sign * (SIDE_X + 16), 8, FAR_Z / 2],
+  });
+  const list = [endStand(1, FAR_Z), sideStand(-1), sideStand(1)];
+  if (showsNearEnd(view)) list.unshift(endStand(-1, 0));
+  return list;
+}
+
+// A random spot in the crowd (world metres), for the phone flashes.
+export function crowdPoint(random) {
+  const st = standsFor('shoot')[(random() * 4) | 0];
+  const [d0, y0, d1, y1] = TIERS[(random() * 3) | 0], t = random();
+  return st.at(random() * 2 - 1, d0 + (d1 - d0) * t, y0 + (y1 - y0) * t + 0.7);
+}
+
+// The floodlight heads, in the same order as the game's towers array.
+export const TOWERS = [[-27, 14, -30], [27, 14, -30], [-27, 17, FAR_Z + 32], [27, 17, FAR_Z + 32]];
+
+// How the end-stand crowd is cut up so it can cheer: each tier's rows in
+// three bands, each band in this many pieces along the stand, every piece
+// bobbing on its own beat.
+const BANDS = 3, PIECES = 8;
+
 // ------------------------------------------------------------------ bake
 // cam: from views.js. w, h: CSS pixels. dpr: device pixel ratio.
-// opts: { view, cpuColor: '#rrggbb', lights: 0..1 (floodlights on) }
+// opts: { view, cpuColor: '#rrggbb' }
+// Returns layers the renderer stacks every frame:
+//   back:  sky, stands with their crowd, haze
+//   bare:  the same without the end stands' crowd, which is in `tiles`
+//          instead (drawn with an offset while that end cheers)
+//   front: pitch, side stands, boards and lines (transparent elsewhere)
 export function bakeStadium(cam, w, h, dpr, opts) {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(w * dpr)); canvas.height = Math.max(1, Math.round(h * dpr));
-  const c = canvas.getContext('2d');
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const rnd = seeded(7);
+  const layer = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * dpr)); canvas.height = Math.max(1, Math.round(h * dpr));
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { canvas, ctx };
+  };
   const P = (x, y, z) => project(cam, x, y, z);
+  let c;   // the layer being painted
   const polyPath = (pts) => {
     const s = projectPoly(cam, pts);
     if (s.length < 3) return false;
@@ -62,44 +104,21 @@ export function bakeStadium(cam, w, h, dpr, opts) {
     c.globalAlpha = alpha; c.fillStyle = style; c.fill(); c.globalAlpha = 1;
   };
 
-  // ---------------- sky
-  const sky = c.createLinearGradient(0, 0, 0, h);
-  sky.addColorStop(0, '#02040b'); sky.addColorStop(0.55, '#0a1330'); sky.addColorStop(1, '#16224a');
-  c.fillStyle = sky; c.fillRect(0, 0, w, h);
-  c.fillStyle = '#ffffff';
-  for (let i = 0; i < 160; i++) {
-    c.globalAlpha = 0.2 + rnd() * 0.5;
-    c.fillRect(rnd() * w, rnd() * h * 0.22, 1.4, 1.4);
-  }
-  c.globalAlpha = 1;
-
-  // ---------------- stands and crowd
   const pal = crowdPalettes(opts.cpuColor || '#2fc6b4');
-  // Each stand is a list of tiers in world space; `at(u, d, y)` places a
-  // point u along the stand (-1..1), d metres back from its front line, at height y.
-  const stands = [];
-  const endStand = (sign, lineZ) => ({
-    at: (u, d, y) => [u * END_W, y, lineZ + sign * d],
-    len: END_W * 2, kind: 'end', lean: (u) => (u * sign < 0 ? 'you' : 'cpu'),
-    centre: [0, 8, lineZ + sign * 16],
-  });
-  const sideStand = (sign) => ({
-    at: (u, d, y) => [sign * (SIDE_X + d), y, (FAR_Z - 6) / 2 + u * (FAR_Z + 6) / 2],
-    len: FAR_Z + 6, kind: 'side', lean: () => 'mix',
-    centre: [sign * (SIDE_X + 16), 8, FAR_Z / 2],
-  });
-  if (showsNearEnd(opts.view)) stands.push(endStand(-1, 0));
-  stands.push(endStand(1, FAR_Z), sideStand(-1), sideStand(1));
+  const stands = standsFor(opts.view);
   // far stands first, so nearer ones paint over them
   const dist = (p) => Math.hypot(p[0] - cam.eye.x, p[2] - cam.eye.z);
   stands.sort((a, b) => dist(b.centre) - dist(a.centre));
+  const ends = stands.filter((st) => st.kind === 'end'), sides = stands.filter((st) => st.kind === 'side');
 
-  const drawStand = (st) => {
-    for (const [d0, y0, d1, y1] of TIERS) {
+  // One stand: tier faces, fascias and the crowd: rows of small round heads,
+  // dimmer toward the back. heads(head) receives each head instead of it
+  // being painted, when the crowd goes into tiles.
+  const drawStand = (st, rnd, heads) => {
+    TIERS.forEach(([d0, y0, d1, y1], tier) => {
       const A = (u, d, y) => st.at(u, d, y);
       fillPoly([A(-1, d0, y0), A(1, d0, y0), A(1, d1, y1), A(-1, d1, y1)], '#141b2e');
       fillPoly([A(-1, d0 - 0.3, y0 - 0.6), A(1, d0 - 0.3, y0 - 0.6), A(1, d0, y0), A(-1, d0, y0)], '#232c47');
-      // the crowd: rows of small round heads, dimmer toward the back
       const rows = 18, step = 0.42;
       for (let r = 0; r < rows; r++) {
         const t = (r + 0.5) / rows, d = d0 + (d1 - d0) * t, y = y0 + (y1 - y0) * t;
@@ -107,7 +126,7 @@ export function bakeStadium(cam, w, h, dpr, opts) {
         const alpha = 0.4 + 0.35 * (1 - t);
         for (let i = 0; i < n; i++) {
           const u = -1 + (i + rnd() * 0.7) * 2 / n;
-          const skip = rnd() < 0.08, colPick = rnd(), lean = rnd(), sizeK = rnd(), stand = rnd();
+          const skip = rnd() < 0.08, colPick = rnd(), lean = rnd(), sizeK = rnd(), up = rnd();
           if (skip) continue;
           const [x, , z] = st.at(u, d, y);
           const p = P(x, y + 0.25, z);
@@ -117,28 +136,78 @@ export function bakeStadium(cam, w, h, dpr, opts) {
           const side = st.lean(u);
           const group = side === 'mix' ? (lean < 0.3 ? pal.you : lean < 0.6 ? pal.cpu : pal.neutral)
             : lean < 0.62 ? pal[side] : lean < 0.8 ? pal[side === 'you' ? 'cpu' : 'you'] : pal.neutral;
-          c.globalAlpha = alpha;
-          c.fillStyle = group[Math.floor(colPick * group.length)];
-          c.beginPath();
-          c.arc(p.x, p.y - (stand < 0.12 ? rr * 1.4 : 0), rr, 0, Math.PI * 2);
-          c.fill();
+          const head = { x: p.x, y: p.y - (up < 0.12 ? rr * 1.4 : 0), r: rr, s: p.s, alpha, color: group[Math.floor(colPick * group.length)],
+            key: `${side}|${st.centre[2]}|${tier}|${Math.floor(r / (rows / BANDS))}|${Math.min(PIECES - 1, Math.floor((u + 1) / 2 * PIECES))}`, side };
+          if (heads) { heads(head); continue; }
+          c.globalAlpha = alpha; c.fillStyle = head.color;
+          c.beginPath(); c.arc(head.x, head.y, rr, 0, Math.PI * 2); c.fill();
         }
       }
       c.globalAlpha = 1;
-    }
+    });
   };
-  const ends = stands.filter((s) => s.kind === 'end'), sides = stands.filter((s) => s.kind === 'side');
-  ends.forEach(drawStand);
 
-  // camera flashes frozen in the stands, then the night haze over it all
-  c.fillStyle = '#ffffff';
-  for (let i = 0; i < 26; i++) {
-    c.globalAlpha = 0.5 + rnd() * 0.5;
-    c.beginPath(); c.arc(rnd() * w, h * (0.05 + rnd() * 0.3), 1 + rnd() * 1.8, 0, Math.PI * 2); c.fill();
+  // ---------------- back layers: sky, end stands, haze (twice: with and without the crowd)
+  const tileHeads = new Map();
+  const paintBack = (L, collect) => {
+    c = L.ctx;
+    const rnd = seeded(7);
+    const sky = c.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#02040b'); sky.addColorStop(0.55, '#0a1330'); sky.addColorStop(1, '#16224a');
+    c.fillStyle = sky; c.fillRect(0, 0, w, h);
+    c.fillStyle = '#ffffff';
+    for (let i = 0; i < 160; i++) {
+      c.globalAlpha = 0.2 + rnd() * 0.5;
+      c.fillRect(rnd() * w, rnd() * h * 0.22, 1.4, 1.4);
+    }
+    c.globalAlpha = 1;
+    for (const st of ends) {
+      drawStand(st, rnd, collect ? (hd) => {
+        let list = tileHeads.get(hd.key);
+        if (!list) tileHeads.set(hd.key, (list = []));
+        list.push(hd);
+      } : null);
+    }
+    // camera flashes frozen in the stands, then the night haze over it all
+    c.fillStyle = '#ffffff';
+    for (let i = 0; i < 26; i++) {
+      c.globalAlpha = 0.5 + rnd() * 0.5;
+      c.beginPath(); c.arc(rnd() * w, h * (0.05 + rnd() * 0.3), 1 + rnd() * 1.8, 0, Math.PI * 2); c.fill();
+    }
+    c.globalAlpha = 0.32; c.fillStyle = '#0a1020'; c.fillRect(0, 0, w, h); c.globalAlpha = 1;
+  };
+  const back = layer(), bare = layer();
+  paintBack(back, false);
+  paintBack(bare, true);
+
+  // ---------------- crowd tiles: each piece of crowd on its own small canvas
+  const tiles = [];
+  const tileRnd = seeded(11);
+  for (const heads of tileHeads.values()) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, s = 0;
+    for (const hd of heads) {
+      x0 = Math.min(x0, hd.x - hd.r); x1 = Math.max(x1, hd.x + hd.r);
+      y0 = Math.min(y0, hd.y - hd.r); y1 = Math.max(y1, hd.y + hd.r);
+      s += hd.s;
+    }
+    x0 = Math.floor(x0 - 1); y0 = Math.floor(y0 - 1);
+    const tw = Math.ceil(x1 + 1 - x0), th = Math.ceil(y1 + 1 - y0);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(tw * dpr)); canvas.height = Math.max(1, Math.ceil(th * dpr));
+    const t = canvas.getContext('2d');
+    t.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr);
+    for (const hd of heads) {
+      t.globalAlpha = hd.alpha; t.fillStyle = hd.color;
+      t.beginPath(); t.arc(hd.x, hd.y, hd.r, 0, Math.PI * 2); t.fill();
+    }
+    // the same haze as the rest of the stand
+    t.globalAlpha = 0.32; t.globalCompositeOperation = 'source-atop'; t.fillStyle = '#0a1020'; t.fillRect(x0, y0, tw, th);
+    tiles.push({ canvas, x: x0, y: y0, w: tw, h: th, s: s / heads.length, side: heads[0].side, phase: tileRnd() * Math.PI * 2 });
   }
-  c.globalAlpha = 0.32; c.fillStyle = '#0a1020'; c.fillRect(0, 0, w, h); c.globalAlpha = 1;
 
-  // ---------------- pitch with mowing stripes across
+  // ---------------- front layer: pitch with mowing stripes across, side stands, boards, lines
+  const front = layer();
+  c = front.ctx;
   // (the keeper view stands behind the goal, in the stand's place: grass right up to the lens)
   const z0 = showsNearEnd(opts.view) ? -6 : Math.min(-6, cam.eye.z), z1 = FAR_Z + 6;
   const top = P(0, 0, z1), bottom = h;
@@ -159,8 +228,9 @@ export function bakeStadium(cam, w, h, dpr, opts) {
     c.fillStyle = g; c.fillRect(pool.x - r, pool.y - r, r * 2, r * 2);
     c.restore();
   }
-
-  sides.forEach(drawStand);
+  const sideRnd = seeded(5);
+  sides.forEach((st) => drawStand(st, sideRnd, null));
+  c.globalAlpha = 1;
 
   // ---------------- ad boards: alternating gold and teal panels
   const boardFont = (px) => `900 ${px}px ${getComputedStyle(document.documentElement).getPropertyValue('--display') || "'Arial Black', sans-serif"}`;
@@ -218,29 +288,34 @@ export function bakeStadium(cam, w, h, dpr, opts) {
   for (let i = 0; i < 12; i++) { const t = (i / 12) * Math.PI * 2; spot.push([Math.cos(t) * 0.12, 0.004, SPOT_Z + Math.sin(t) * 0.12]); }
   if (polyPath(spot)) { c.fillStyle = 'rgba(242,246,238,0.92)'; c.fill(); }
 
-  // ---------------- floodlight towers (heads, lamps, glow)
-  const towers = [];
-  if (showsNearEnd(opts.view)) towers.push([-27, 14, -30], [27, 14, -30]);
-  towers.push([-27, 17, FAR_Z + 32], [27, 17, FAR_Z + 32]);
-  const lights = opts.lights ?? 1;
-  for (const [x, y, z] of towers) {
-    const p = P(x, y, z);
-    if (!p) continue;
+  return { back: back.canvas, bare: bare.canvas, front: front.canvas, tiles };
+}
+
+// The floodlight heads, drawn every frame so each can switch on by itself
+// in the title sequence. towers: [{ shown: 0..1, flare: 0..1 }] in TOWERS order.
+export function drawTowers(ctx, cam, towers) {
+  TOWERS.forEach(([x, y, z], i) => {
+    const t = towers[i];
+    const p = project(cam, x, y, z);
+    if (!p || !t) return;
+    const on = t.shown;
     const hw = 2.2 * p.s, hh = 0.8 * p.s;
-    c.fillStyle = lights > 0.5 ? '#d9d9d0' : '#3a4052';
-    c.fillRect(p.x - hw, p.y - hh, hw * 2, hh * 2);
-    c.fillStyle = lights > 0.5 ? '#fffdf0' : '#59607a';
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) {
-      c.beginPath(); c.arc(p.x - hw * 0.75 + i * hw * 0.5, p.y - hh * 0.45 + j * hh * 0.9, hh * 0.36, 0, Math.PI * 2); c.fill();
+    ctx.fillStyle = on > 0.5 ? '#d9d9d0' : '#3a4052';
+    ctx.fillRect(p.x - hw, p.y - hh, hw * 2, hh * 2);
+    ctx.fillStyle = on > 0.5 ? '#fffdf0' : '#59607a';
+    ctx.beginPath();
+    for (let a = 0; a < 4; a++) for (let b = 0; b < 2; b++) {
+      const cx = p.x - hw * 0.75 + a * hw * 0.5, cy = p.y - hh * 0.45 + b * hh * 0.9;
+      ctx.moveTo(cx + hh * 0.36, cy); ctx.arc(cx, cy, hh * 0.36, 0, Math.PI * 2);
     }
-    if (lights > 0.5) {
-      const r = 9.6 * p.s;
-      const g = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-      g.addColorStop(0, 'rgba(255,251,232,0.55)'); g.addColorStop(0.15, 'rgba(255,242,192,0.47)'); g.addColorStop(1, 'rgba(255,242,192,0)');
-      c.fillStyle = g; c.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+    ctx.fill();
+    if (on > 0.02) {
+      const r = (9.6 + t.flare * 14) * p.s;
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      g.addColorStop(0, `rgba(255,251,232,${0.55 * on})`); g.addColorStop(0.15, `rgba(255,242,192,${0.47 * on})`); g.addColorStop(1, 'rgba(255,242,192,0)');
+      ctx.fillStyle = g; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
     }
-  }
-  return canvas;
+  });
 }
 
 // ------------------------------------------------------------------ the goal
