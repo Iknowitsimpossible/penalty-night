@@ -37,7 +37,7 @@ export function viewCamera(name, w, h) {
     return makeCamera({ x: -3.5, y: 2.1, z: 15.5 }, { x: -4.2, y: 1.6, z: 0 }, f, w / 2, h / 2);
   }
   // the mode picker: the goal high on the screen, clear of the menu tiles below it
-  if (name === 'pick') return makeCamera({ x: 0, y: 1.32, z: 15.6 }, { x: 0, y: 1.25, z: 0 }, f, w / 2, h * (w / h < 1 ? 0.17 : 0.3));
+  if (name === 'pick') return makeCamera({ x: 0, y: 1.32, z: 15.6 }, { x: 0, y: 1.25, z: 0 }, f, w / 2, h * (w / h < 1 ? 0.17 : 0.36));
   if (name === 'replayL' || name === 'replayR') {
     // Low and to the side the ball went, square to the flight, so the
     // spot, the keeper and the whole goal are in shot. The lens is the
