@@ -23,7 +23,7 @@ export function viewCamera(name, w, h) {
     // floor for tall phones), so the goal fills a third of a landscape screen.
     const lens = Math.max(0.81 * w, 0.62 * h);
     const portrait = w / h < 1;
-    return makeCamera({ x: 0, y: 2.4, z: 18 }, { x: 0, y: 2.4, z: 0 }, lens, w / 2, h * (portrait ? 0.5 : 0.4));
+    return makeCamera({ x: 0, y: 2.4, z: 18 }, { x: 0, y: 2.4, z: 0 }, lens, w / 2, h * (portrait ? 0.44 : 0.4));
   }
   if (name === 'keeper') {
     // Behind the goal. On narrow screens the camera backs up until the whole
