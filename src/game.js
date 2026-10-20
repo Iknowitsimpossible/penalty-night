@@ -1205,6 +1205,8 @@ if (import.meta.env.DEV) {
     get paused() { return paused; },
     dive: (x, y) => diveTo(x, y),
     intro: () => startIntro(),
+    // your kick without a swipe: aim point in the goal, flight time T (s), curl
+    kick: (aimX, aimY, T = 0.6, spin = 0) => shoot({ aimX, aimY, T, spin, power: 0.8 }),
     get plan() { return match.plan && { ...match.plan }; },
     get training() { return trainingStage && { ...trainingStage }; },
     get homeX() { return keeper.homeX; },
