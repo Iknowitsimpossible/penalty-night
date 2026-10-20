@@ -139,7 +139,8 @@ export function bakeStadium(cam, w, h, dpr, opts) {
   c.globalAlpha = 0.32; c.fillStyle = '#0a1020'; c.fillRect(0, 0, w, h); c.globalAlpha = 1;
 
   // ---------------- pitch with mowing stripes across
-  const z0 = showsNearEnd(opts.view) ? -6 : Math.max(-6, cam.eye.z + 0.5), z1 = FAR_Z + 6;
+  // (the keeper view stands behind the goal, in the stand's place: grass right up to the lens)
+  const z0 = showsNearEnd(opts.view) ? -6 : Math.min(-6, cam.eye.z), z1 = FAR_Z + 6;
   const top = P(0, 0, z1), bottom = h;
   const grass = c.createLinearGradient(0, top ? top.y : 0, 0, bottom);
   grass.addColorStop(0, '#2b7a35'); grass.addColorStop(1, '#1c5a26');
