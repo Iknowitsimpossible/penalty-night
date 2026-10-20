@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { createBallState, launchVelocity, stepBall } from '../physics/ball.js';
 import { newShot, coolDown, collideStep, judge } from '../physics/collisions.js';
-import { makePerson, KITS, newKeeper, poseKeeper, planDive, updateKeeper, keeperSpheres } from '../render/people.js';
+import { makePerson, KITS, newKeeper, poseKeeper, planDive, updateKeeper, keeperSpheres } from '../body/people.js';
 
 const H = 1 / 240;
 let body = null;

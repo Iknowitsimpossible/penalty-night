@@ -1,4 +1,4 @@
-/* Layout: one full-bleed 3D stadium; a stadium-LED scoreboard floats on top, menus are lit panels over a dimmed pitch. */
+/* Layout: one full-bleed floodlit stadium (a 2D canvas); a stadium-LED scoreboard floats on top, menus are lit panels over a dimmed pitch. */
 :root {
   --night: #080c18;
   --panel: rgba(8, 12, 24, 0.82);
@@ -208,7 +208,6 @@ h1.mid { font-size: clamp(30px, 6.5vw, 48px); }
 .final { margin: 0; font-family: var(--mono); font-weight: 700; font-size: 40px; color: var(--flood); text-align: center; font-variant-numeric: tabular-nums; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 button:focus-visible { outline: 2px solid var(--flood); outline-offset: 2px; }
-#fail { position: absolute; inset: 0; display: grid; place-items: center; padding-inline: 16px; text-align: center; color: var(--muted); }
 @media (max-width: 520px) {
   /* Phones: the scoreboard fills the space beside the pause button. */
   .hud { left: 64px; right: 12px; transform: none; width: auto; max-width: none; gap: 3px 8px; padding: 6px 10px; justify-content: center; }

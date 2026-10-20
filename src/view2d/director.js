@@ -24,7 +24,7 @@ export function createDirector() {
     },
     get jolt() { return jolt; },
     snap() {},
-    shake(amount) { shake = Math.max(shake, amount); },
+    shake(amount) { if (Number.isFinite(amount)) shake = Math.max(shake, amount); },
   };
   return director;
 }

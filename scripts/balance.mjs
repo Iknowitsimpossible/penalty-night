@@ -8,7 +8,7 @@
 import { createRng } from '../src/core/random.js';
 import { KEEPER_Z, RUNUP, COMMIT, HALF } from '../src/core/constants.js';
 import { predictCrossing } from '../src/physics/ball.js';
-import { planDive } from '../src/render/people.js';
+import { planDive } from '../src/body/people.js';
 import { playKick } from '../src/sim/kick-sim.js';
 import { keeperPlan, readDive } from '../src/ai/keeper.js';
 import { planShot, reconsider, executeShot } from '../src/ai/taker.js';

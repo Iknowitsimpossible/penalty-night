@@ -3,12 +3,12 @@
 // a shaded head and a light-to-dark gradient over the whole silhouette.
 //
 // The skeleton is not animated here. bodyPose() reads the joints of the
-// procedural body in render/people.js (the same body the collision spheres
+// procedural body in body/people.js (the same body the collision spheres
 // come from), projects them through the camera, and drawFigure() draws the
 // concept figure through those points. So what you see is what saves.
 import * as THREE from 'three';
 import { project } from './projection.js';
-import { KITS } from '../render/people.js';
+import { KITS } from '../body/people.js';
 
 // ------------------------------------------------------------------ colours
 const hex = (n) => '#' + n.toString(16).padStart(6, '0');

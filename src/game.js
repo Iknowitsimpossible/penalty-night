@@ -10,12 +10,12 @@ import { createDirector } from './view2d/director.js';
 import { screenToGoal as tapToGoal, project } from './view2d/projection.js';
 import { createNet } from './view2d/net.js';
 import { createEffects, GOLD } from './view2d/effects.js';
-import { makePerson, KITS, animateRunup, poseStriker, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './render/people.js';
+import { makePerson, KITS, animateRunup, poseStriker, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './body/people.js';
 import { createBallState, launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
 import { newShot, coolDown, collideStep, judge } from './physics/collisions.js';
 import { createBallTracking } from './view2d/ball.js';
-import { createReplays } from './render/replay.js';
-import { createQualityGovernor } from './render/quality.js';
+import { createReplays } from './body/replay.js';
+import { createQualityGovernor } from './view2d/quality.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
@@ -68,7 +68,7 @@ function bulgeNet(at, dir, strength) {
   net.bulge(at, dir, strength);
 }
 
-// ------------------------------------------------------------------ celebration effects (render/effects.js)
+// ------------------------------------------------------------------ celebration effects (view2d/effects.js)
 let cpuPal = [0x2fc6b4, 0x9ff2e6, 0xffffff];   // confetti for the opponent's fans
 const effects = createEffects({ behindGoal: () => cam.goal === 'keeper', onFirework: () => sfx.pop() });
 const { updateConfetti, updateFireworks, updateFlashes } = effects;
@@ -84,7 +84,7 @@ function applyMotion() {
 if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', applyMotion);
 applyMotion();
 
-// ------------------------------------------------------------------ people (render/people.js)
+// ------------------------------------------------------------------ people (body/people.js)
 const keepers = { cpu: makePerson(scene, KITS.cpuKeeper), you: makePerson(scene, KITS.youKeeper) };
 const taker = makePerson(scene, KITS.cpuTaker);
 const striker = makePerson(scene, KITS.youTaker);   // you: only seen in replays and celebrations
@@ -92,7 +92,7 @@ striker.root.visible = false;
 const withLanding = (k) => { k.onLand = () => sfx.land(); return k; };
 let keeper = withLanding(newKeeper(keepers.cpu));
 
-// ------------------------------------------------------------------ ball (physics/ball.js, render/ball.js)
+// ------------------------------------------------------------------ ball (physics/ball.js, view2d/ball.js)
 const ball = { ...createBallState(), roll: 0 };   // roll: how far the panels have turned (radians)
 const ballTracking = createBallTracking();
 let goalFade = 0;
@@ -543,7 +543,7 @@ function finishPost() {
   nextTurn();
 }
 
-// ------------------------------------------------------------------ replays (render/replay.js)
+// ------------------------------------------------------------------ replays (body/replay.js)
 const replays = createReplays({
   ball, poseKeeper, animateRunup, cam, reduced: () => motionReduced,
   bulgeNet: (at, dir, s) => net.bulge(at, dir, s),
@@ -1140,7 +1140,7 @@ const FIGURES = [
 ];
 const frameState = {
   time: 0, cheer, towers, figures: FIGURES, ball: { pos: ball.pos, roll: 0 }, net, goalFade: 0, markers: [cornerHint, pulse.sprite, marker], shake: null,
-  over: (ctx, c) => { ballTracking.draw(ctx, c, ball.pos); effects.draw(ctx, c); },
+  over: (ctx, c) => { ballTracking.draw(ctx, c, ball.pos); effects.draw(ctx, c); if (debugView) debugView.draw(ctx, c); },
 };
 function render() {
   view.setView(cam.view);
@@ -1175,7 +1175,7 @@ if (import.meta.env.DEV) {
   // C shows the collision shapes; while it is on, the game freezes on the
   // first frame and keeper contact of each kick. Any key or click resumes
   // (and is swallowed, so it does not also shoot or dive).
-  import('./render/collision-debug.js').then(({ createCollisionDebug }) => { debugView = createCollisionDebug(scene); });
+  import('./view2d/collision-debug.js').then(({ createCollisionDebug }) => { debugView = createCollisionDebug(); });
   window.addEventListener('keydown', (e) => {
     if (!debugView) return;
     if (debugView.halted) { e.preventDefault(); e.stopImmediatePropagation(); debugView.resume(); return; }
