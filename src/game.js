@@ -20,6 +20,7 @@ import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
 import { keeperPlan, readDive } from './ai/keeper.js';
+import { hintSkill, shotHint } from './ai/hint.js';
 import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { LEVELS } from './ai/levels.js';
 import { explainKick, explainSave } from './feedback/explain.js';
@@ -235,7 +236,7 @@ function setupCpuKick() {
   match.turn = 'cpu'; match.phase = training ? 'ready' : 'runup'; match.timer = 0; shot = null;
   lineUp();
   match.plan = training ? drillPlan(trainingStage, rng) : planShot(match.opp.style, rng);
-  match.dive = null; match.committed = false;
+  match.dive = null; match.committed = false; match.strike = null; hintZone.t = null; hintZone.visible = false;
   keys.reset(1.0);
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
@@ -366,7 +367,8 @@ function diveTo(x, y) {
 }
 
 function cpuShoot() {
-  const k = executeShot(match.plan, match.opp.style, level, rng);
+  // the strike was decided at the plant foot (so the keeper hint can show it)
+  const k = match.strike || executeShot(match.plan, match.opp.style, level, rng);
   launch(new THREE.Vector3(k.target.x, k.target.y, 0), k.T, k.spin);
   sfx.kick(0.7); sfx.hush(false);
   startShot();
@@ -776,7 +778,16 @@ function pulseDive(x, y, early) {
   Object.assign(pulse.sprite, { x, y, z: KEEPER_Z + 0.08, color: early ? '#ef5a5f' : '#f2c230', visible: true });
   pulse.t = 0;
 }
+// The keeper hint (ai/hint.js): a soft zone that fades in at the plant foot
+// and stays until the kick is decided.
+const hintZone = { x: 0, y: 0, z: 0, size: 1, color: '#f2c230', zone: true, opacity: 0, visible: false, t: null };
 function updateKeeperMarkers(dt) {
+  if (hintZone.t !== null) {
+    hintZone.t += dt;
+    hintZone.visible = hintZone.t >= 0;
+    hintZone.opacity = Math.min(1, Math.max(0, hintZone.t / 0.15));
+    if (post || match.turn !== 'cpu' || (shot && shot.done)) { hintZone.t = null; hintZone.visible = false; }
+  }
   if (pulse.sprite.visible) {
     pulse.t += dt;
     const k = Math.min(pulse.t / 0.45, 1);
@@ -1004,7 +1015,7 @@ function resetScenery() {
   hideKeeper(keepers.you); taker.root.visible = false; striker.root.visible = false;
   keepers.cpu.root.visible = true;
   keeper = newKeeper(keepers.cpu); keeper.active = true; poseKeeper(keeper);
-  marker.visible = false; cornerHint.visible = false; pulse.sprite.visible = false;
+  marker.visible = false; cornerHint.visible = false; pulse.sprite.visible = false; hintZone.visible = false; hintZone.t = null;
   $('readyBtn').hidden = true; $('stepper').hidden = true;
   placeBall();
 }
@@ -1064,6 +1075,14 @@ function tick(dt) {
       const f = taker.root.position;
       burstConfetti(f.x + 0.15, 0.1, f.z, 0.15, 12, [0x2f6b35, 0x4d8a45, 0x6b5a3a], 2.4);
       match.plan = reconsider(match.plan, match.dive && match.dive.early ? match.dive : null, match.opp.style, level, rng, keeper.homeX);
+      // The plan is locked now, so the strike (with the taker's error) is
+      // decided here; in matches the keeper hint lights up around it.
+      match.strike = executeShot(match.plan, match.opp.style, level, rng);
+      if ((match.mode === 'quick' || match.mode === 'cup') && settings.keeperHints === 'on') {
+        const h = shotHint(match.strike.target, hintSkill(level), rng);
+        Object.assign(hintZone, { x: h.x, y: h.y, z: KEEPER_Z + 0.04, size: h.r * 2, opacity: 0, visible: false });
+        hintZone.t = -h.delay;
+      }
     }
     if (match.timer >= RUNUP) cpuShoot();
   }
@@ -1150,7 +1169,7 @@ const FIGURES = [
   { body: striker, role: 'youTaker', fwd: -1, kneeOut: 0.015 },
 ];
 const frameState = {
-  time: 0, cheer, towers, figures: FIGURES, ball: { pos: ball.pos, roll: 0 }, net, goalFade: 0, markers: [cornerHint, pulse.sprite, marker], shake: null,
+  time: 0, cheer, towers, figures: FIGURES, ball: { pos: ball.pos, roll: 0 }, net, goalFade: 0, markers: [hintZone, cornerHint, pulse.sprite, marker], shake: null,
   over: (ctx, c) => { ballTracking.draw(ctx, c, ball.pos); effects.draw(ctx, c); if (debugView) debugView.draw(ctx, c); },
 };
 function render() {
@@ -1226,6 +1245,7 @@ if (import.meta.env.DEV) {
     // your kick without a swipe: aim point in the goal, flight time T (s), curl
     kick: (aimX, aimY, T = 0.6, spin = 0) => shoot({ aimX, aimY, T, spin, power: 0.8 }),
     get plan() { return match.plan && { ...match.plan }; },
+    get hint() { return hintZone.t === null ? null : { x: hintZone.x, y: hintZone.y, r: hintZone.size / 2, t: hintZone.t }; },
     get training() { return trainingStage && { ...trainingStage }; },
     get homeX() { return keeper.homeX; },
     get debug() { return debugView && { on: debugView.on, halted: debugView.halted }; },

@@ -55,6 +55,18 @@ export function createRenderer2D(canvas) {
   function ring(m) {
     const p = project(cam, m.x, m.y, m.z, _p);
     if (!p) return;
+    if (m.zone) {
+      // the keeper hint: a soft glow with a dashed edge, breathing slowly
+      const r = (m.size / 2) * p.s, pulse = 1 + 0.04 * Math.sin(performance.now() / 160);
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * pulse);
+      g.addColorStop(0, 'rgba(242,194,48,0.42)'); g.addColorStop(0.7, 'rgba(242,194,48,0.22)'); g.addColorStop(1, 'rgba(242,194,48,0)');
+      ctx.globalAlpha = m.opacity ?? 1;
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, p.y, r * pulse, 0, Math.PI * 2); ctx.fill();
+      ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(255,230,140,0.85)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.92, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      return;
+    }
     const r = (m.size / 2) * p.s * (1 - 12 / 128 * 2);
     ctx.globalAlpha = m.opacity ?? 1;
     ctx.strokeStyle = m.color; ctx.lineWidth = Math.max(1.5, m.size * p.s * 9 / 128);

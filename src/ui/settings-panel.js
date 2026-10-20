@@ -6,6 +6,7 @@ const LABELS = {
   replays: ['Replays', 'Which kicks replay by themselves. You can always replay from the card.'],
   celebrations: ['Celebrations', 'Auto keeps them short in practice and quick matches.'],
   motion: ['Motion', 'Reduced turns off camera sweeps, slow motion, confetti and fireworks.'],
+  keeperHints: ['Keeper hints', 'When their taker plants a foot, a glowing zone shows where the shot is going.'],
 };
 
 export function createSettingsPanel(container, settings, onChange) {
