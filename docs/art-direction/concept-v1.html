@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Penalty Night concept</title>
+<style>
+  :root { --bg: #070b16; --panel: #0f1628; --ink: #e8ecf6; --dim: #8f9ab3; --gold: #f2c230; --teal: #1fb59f; --line: #222c45; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1600px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: 0.02em; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim); margin: 40px 0 12px; }
+  p.lede { color: var(--dim); margin: 0 0 18px; max-width: 70ch; }
+  svg { display: block; width: 100%; height: auto; }
+  .frame { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { .grid { grid-template-columns: 1.3fr 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sw { width: 84px; font-size: 12px; color: var(--dim); }
+  .sw i { display: block; height: 44px; border-radius: 6px; margin-bottom: 4px; border: 1px solid #ffffff22; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 4px 0; }
+  .poses { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .pose { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 8px 10px; text-align: center; font-size: 13px; }
+  .pose b { display: block; color: var(--ink); }
+  .pose span { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Penalty Night: character art direction, concept v1</h1>
+  <p class="lede">Stylized but natural football players: real adult proportions (about 7.5 heads tall), bold readable silhouettes under floodlights, and kits with real detail (trim, numbers, glove straps, sock bands). Shown here: the in-game camera at the moment of a save, the result card, the character lineup, and one key pose for each animation the GLB models need.</p>
+
+  <div class="frame"><svg id="hero" viewBox="0 0 1600 900"></svg></div>
+
+  <h2>Character lineup (same scale, head-unit guides)</h2>
+  <div class="grid">
+    <div class="frame"><svg id="lineup" viewBox="0 0 900 560"></svg></div>
+    <div class="card">
+      <h3 style="margin-top:0">Style rules</h3>
+      <ul>
+        <li><b>Proportions:</b> 7.5 heads, broad shoulders, long legs. No chibi or big-head styling; the keeper is a head taller than the taker.</li>
+        <li><b>Silhouette first:</b> limbs read clearly against the crowd at 140&nbsp;px tall (keeper size in game). Oversized white gloves on the keeper so you can always find the hands.</li>
+        <li><b>Kits:</b> flat team colour with one contrast trim (collar, cuffs, side panel), a number on the back, a band at the top of the socks. Same mesh for every team; only the textures change.</li>
+        <li><b>Surfaces:</b> soft PBR (rough cloth, slightly glossy boots and gloves). Rim light from the floodlights separates players from the stands.</li>
+        <li><b>Faces:</b> simple and readable, not photo-real. Nobody will see them up close except in replays.</li>
+      </ul>
+      <h3>Palette</h3>
+      <div class="swatches">
+        <div class="sw"><i style="background:#f2c230"></i>Your kit<br>#f2c230</div>
+        <div class="sw"><i style="background:#15161b"></i>Your trim<br>#15161b</div>
+        <div class="sw"><i style="background:#1fb59f"></i>CPU kit<br>#1fb59f</div>
+        <div class="sw"><i style="background:#f1f1f1"></i>CPU shorts<br>#f1f1f1</div>
+        <div class="sw"><i style="background:#f4f4f4"></i>Gloves<br>#f4f4f4</div>
+        <div class="sw"><i style="background:#2f8a3c"></i>Floodlit grass<br>#2f8a3c</div>
+        <div class="sw"><i style="background:#0a1330"></i>Night sky<br>#0a1330</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Key poses: one per required animation clip</h2>
+  <div class="poses" id="poses"></div>
+</main>
+
+<script>
+// ---------------------------------------------------------------- figure drawing
+// A pose is a 2D skeleton in body units (height = 1, y up, x to screen right).
+// drawFigure turns it into tapered limbs, kit pieces and a shaded head.
+let uid = 0;
+const lerp2 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+const shade = (hex, k) => {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (s) => Math.max(0, Math.min(255, Math.round(((n >> s) & 255) * k)));
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+};
+
+function drawFigure(pose, kit, ox, oy, px, opts = {}) {
+  const P = (p) => [ox + p[0] * px, oy - p[1] * px];
+  const out = [];
+  // band: a flat strip across a limb (no round caps), for sock tops, cuffs and glove straps
+  const band = (a, b, r, fill) => {
+    const A = P(a), B = P(b), R = r * px;
+    const dx = B[0] - A[0], dy = B[1] - A[1], len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len * R, ny = dx / len * R;
+    out.push(`<path d="M${A[0] + nx},${A[1] + ny} L${B[0] + nx},${B[1] + ny} L${B[0] - nx},${B[1] - ny} L${A[0] - nx},${A[1] - ny}Z" fill="${fill}"/>`);
+  };
+  const capsule = (a, b, r1, r2, fill) => {
+    const A = P(a), B = P(b), R1 = r1 * px, R2 = r2 * px;
+    const dx = B[0] - A[0], dy = B[1] - A[1], len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    out.push(`<path d="M${A[0] + nx * R1},${A[1] + ny * R1} L${B[0] + nx * R2},${B[1] + ny * R2} L${B[0] - nx * R2},${B[1] - ny * R2} L${A[0] - nx * R1},${A[1] - ny * R1}Z" fill="${fill}"/>`);
+    out.push(`<circle cx="${A[0]}" cy="${A[1]}" r="${R1}" fill="${fill}"/><circle cx="${B[0]}" cy="${B[1]}" r="${R2}" fill="${fill}"/>`);
+  };
+  const poly = (pts, fill) => out.push(`<path d="M${pts.map((p) => P(p).join(',')).join(' L')}Z" fill="${fill}"/>`);
+
+  const keeper = !!kit.gloves;
+  const leg = (side, dim) => {
+    const c = (hex) => (dim ? shade(hex, 0.72) : hex);
+    const hip = pose['hip' + side], knee = pose['k' + side], ank = pose['a' + side], toe = pose['t' + side];
+    capsule(hip, knee, 0.058, 0.044, c(kit.skin));
+    capsule(knee, lerp2(knee, ank, 0.12), 0.044, 0.044, c(kit.skin));
+    capsule(lerp2(knee, ank, 0.12), lerp2(knee, ank, 0.4), 0.043, 0.045, c(kit.socks));
+    capsule(lerp2(knee, ank, 0.4), ank, 0.045, 0.027, c(kit.socks));
+    band(lerp2(knee, ank, 0.12), lerp2(knee, ank, 0.2), 0.0445, c(kit.sockBand));
+    capsule(ank, toe, 0.031, 0.022, c(kit.boots));
+    capsule(lerp2(ank, toe, 0.25), toe, 0.012, 0.012, c(kit.bootTrim));
+    capsule(hip, lerp2(hip, knee, 0.42), 0.074, 0.066, c(kit.shorts));
+  };
+  const arm = (side, dim) => {
+    const c = (hex) => (dim ? shade(hex, 0.72) : hex);
+    const sh = pose['s' + side], el = pose['e' + side], ha = pose['h' + side];
+    capsule(sh, el, 0.04, 0.032, c(keeper ? kit.shirt : kit.skin));
+    capsule(el, ha, 0.032, 0.025, c(keeper ? kit.shirt : kit.skin));
+    if (!keeper) capsule(sh, lerp2(sh, el, 0.5), 0.05, 0.044, c(kit.shirt));
+    if (!keeper) band(lerp2(sh, el, 0.44), lerp2(sh, el, 0.5), 0.0445, c(kit.trim));
+    if (keeper) {
+      const tip = [ha[0] + (ha[0] - el[0]) * 0.38, ha[1] + (ha[1] - el[1]) * 0.38];
+      capsule(lerp2(el, ha, 0.85), tip, 0.036, 0.046, c(kit.gloves));
+      band(lerp2(el, ha, 0.84), lerp2(el, ha, 0.93), 0.038, c(kit.gloveStrap));
+    } else {
+      const tip = [ha[0] + (ha[0] - el[0]) * 0.22, ha[1] + (ha[1] - el[1]) * 0.22];
+      capsule(ha, tip, 0.024, 0.02, c(kit.skin));
+    }
+  };
+
+  const near = pose.far === 'L' ? 'R' : 'L';
+  if (pose.far) { leg(pose.far, true); arm(pose.far, true); }
+  else { leg('L'); leg('R'); }
+
+  // torso: shoulders widened along the shoulder line, hips along the hip line
+  const sL = pose.sL, sR = pose.sR, hL = pose.hipL, hR = pose.hipR;
+  const pelvis = lerp2(hL, hR, 0.5), neck = pose.neck;
+  const up = [neck[0] - pelvis[0], neck[1] - pelvis[1]], ul = Math.hypot(...up);
+  const u = [up[0] / ul, up[1] / ul], s = [u[1], -u[0]];   // s points to body's screen-right
+  const w = (p, k, j = 0) => [p[0] + s[0] * k + u[0] * j, p[1] + s[1] * k + u[1] * j];
+  const sw = pose.far ? 0.06 : 0.035;
+  const top = lerp2(sL, sR, 0.5);
+  const torso = pose.far
+    ? [w(top, -0.085, 0.03), w(top, 0.075, 0.03), w(pelvis, 0.07, 0.07), w(pelvis, 0.07, -0.02), w(pelvis, -0.075, -0.02), w(pelvis, -0.08, 0.07)]
+    : [w(sL, -sw, 0.03), w(sR, sw, 0.03), w(lerp2(sR, hR, 0.55), 0.01), w(hR, 0.045, 0.06), w(hL, -0.045, 0.06), w(lerp2(sL, hL, 0.55), -0.01)];
+  poly(torso, kit.shirt);
+  // side panel / trim
+  if (!pose.far) {
+    poly([w(lerp2(sR, hR, 0.3), sw * 0.6), w(lerp2(sR, hR, 0.3), sw * 0.6 - 0.018), w(hR, 0.027, 0.06), w(hR, 0.045, 0.06)], kit.trim);
+    poly([w(lerp2(sL, hL, 0.3), -sw * 0.6), w(lerp2(sL, hL, 0.3), -sw * 0.6 + 0.018), w(hL, -0.027, 0.06), w(hL, -0.045, 0.06)], kit.trim);
+  }
+  // shorts waistband
+  poly(pose.far
+    ? [w(pelvis, 0.075, 0.075), w(pelvis, 0.075, -0.06), w(pelvis, -0.08, -0.06), w(pelvis, -0.08, 0.075)]
+    : [w(hR, 0.055, 0.07), w(hR, 0.07, -0.04), w(hL, -0.07, -0.04), w(hL, -0.055, 0.07)], kit.shorts);
+
+  // number on the back / crest on the front
+  const chest = lerp2(top, pelvis, 0.38), Cc = P(chest);
+  const ang = Math.atan2(-s[1], s[0]) * 180 / Math.PI;
+  if (opts.back && kit.number) {
+    out.push(`<g transform="translate(${Cc[0]},${Cc[1]}) rotate(${ang})"><text y="${0.045 * px}" text-anchor="middle" font-family="Impact, 'Arial Black', sans-serif" font-size="${0.14 * px}" fill="${kit.trim}">${kit.number}</text>${kit.name ? `<text y="${-0.06 * px}" text-anchor="middle" font-family="'Arial Black', sans-serif" font-size="${0.032 * px}" letter-spacing="${0.004 * px}" fill="${kit.trim}">${kit.name}</text>` : ''}</g>`);
+  } else if (!pose.far) {
+    const crest = P(w(chest, -0.045, 0.06));
+    out.push(`<circle cx="${crest[0]}" cy="${crest[1]}" r="${0.014 * px}" fill="${kit.trim}"/>`);
+  }
+
+  if (pose.far) { leg(near); arm(near); }
+  else { arm('L'); arm('R'); }
+
+  // neck + head
+  const head = pose.head;
+  capsule(neck, lerp2(neck, head, 0.5), 0.028, 0.026, shade(kit.skin, 0.85));
+  const collar = P(w(neck, 0, -0.005));
+  out.push(`<ellipse cx="${collar[0]}" cy="${collar[1]}" rx="${0.042 * px}" ry="${0.016 * px}" transform="rotate(${ang} ${collar[0]} ${collar[1]})" fill="${kit.trim}"/>`);
+  const H = P(head), rx = 0.056 * px, ry = 0.066 * px;
+  out.push(`<g transform="rotate(${ang} ${H[0]} ${H[1]})">`);
+  out.push(`<ellipse cx="${H[0] - rx * 0.98}" cy="${H[1] + ry * 0.05}" rx="${rx * 0.18}" ry="${ry * 0.26}" fill="${shade(kit.skin, 0.9)}"/><ellipse cx="${H[0] + rx * 0.98}" cy="${H[1] + ry * 0.05}" rx="${rx * 0.18}" ry="${ry * 0.26}" fill="${shade(kit.skin, 0.9)}"/>`);
+  out.push(`<ellipse cx="${H[0]}" cy="${H[1]}" rx="${rx}" ry="${ry}" fill="${kit.skin}"/>`);
+  if (opts.back) {
+    out.push(`<path d="M${H[0] - rx * 1.02},${H[1] + ry * 0.2} Q${H[0] - rx * 1.1},${H[1] - ry * 1.25} ${H[0]},${H[1] - ry * 1.12} Q${H[0] + rx * 1.1},${H[1] - ry * 1.25} ${H[0] + rx * 1.02},${H[1] + ry * 0.2} Q${H[0]},${H[1] + ry * 0.72} ${H[0] - rx * 1.02},${H[1] + ry * 0.2}Z" fill="${kit.hair}"/>`);
+  } else {
+    out.push(`<path d="M${H[0] - rx * 1.03},${H[1] - ry * 0.05} Q${H[0] - rx * 1.05},${H[1] - ry * 1.25} ${H[0]},${H[1] - ry * 1.12} Q${H[0] + rx * 1.05},${H[1] - ry * 1.25} ${H[0] + rx * 1.03},${H[1] - ry * 0.05} Q${H[0] + rx * 0.7},${H[1] - ry * 0.62} ${H[0]},${H[1] - ry * 0.6} Q${H[0] - rx * 0.7},${H[1] - ry * 0.62} ${H[0] - rx * 1.03},${H[1] - ry * 0.05}Z" fill="${kit.hair}"/>`);
+    if (opts.face && !pose.far) {
+      const e = shade(kit.skin, 0.35);
+      out.push(`<ellipse cx="${H[0] - rx * 0.38}" cy="${H[1] - ry * 0.05}" rx="${rx * 0.11}" ry="${ry * 0.08}" fill="${e}"/><ellipse cx="${H[0] + rx * 0.38}" cy="${H[1] - ry * 0.05}" rx="${rx * 0.11}" ry="${ry * 0.08}" fill="${e}"/>`);
+      out.push(`<path d="M${H[0] - rx * 0.58},${H[1] - ry * 0.25} l${rx * 0.38},${-ry * 0.04} M${H[0] + rx * 0.58},${H[1] - ry * 0.25} l${-rx * 0.38},${-ry * 0.04}" stroke="${kit.hair}" stroke-width="${rx * 0.12}" stroke-linecap="round"/>`);
+      out.push(`<path d="M${H[0] - rx * 0.25},${H[1] + ry * 0.48} q${rx * 0.25},${ry * 0.1} ${rx * 0.5},0" stroke="${shade(kit.skin, 0.55)}" stroke-width="${rx * 0.08}" fill="none" stroke-linecap="round"/>`);
+    }
+    if (pose.far) {   // side view: face profile hint (nose) toward the facing direction
+      const dir = pose.far === 'R' ? 1 : -1;
+      out.push(`<path d="M${H[0] + dir * rx * 0.95},${H[1] - ry * 0.1} l${dir * rx * 0.18},${ry * 0.18} l${-dir * rx * 0.2},${ry * 0.05}Z" fill="${kit.skin}"/>`);
+    }
+  }
+  out.push('</g>');
+
+  // volumetric shading: a light-to-dark gradient clipped to the silhouette, plus a floodlight rim
+  const id = 'fig' + (++uid);
+  const body = out.join('');
+  const bb = { x: ox - 0.7 * px, y: oy - 1.4 * px, w: 1.4 * px, h: 1.6 * px };
+  const lightDir = opts.light ?? 1;   // +1 = light from screen-right
+  return `<defs>
+      <mask id="${id}m" maskUnits="userSpaceOnUse" x="${bb.x}" y="${bb.y}" width="${bb.w}" height="${bb.h}"><g fill="#fff">${body.replace(/fill="[^"]*"/g, 'fill="#fff"').replace(/stroke="[^"]*"/g, 'stroke="#fff"')}</g></mask>
+      <linearGradient id="${id}g" x1="${lightDir > 0 ? 1 : 0}" y1="0" x2="${lightDir > 0 ? 0 : 1}" y2="1">
+        <stop offset="0" stop-color="#fff6dc" stop-opacity="0.32"/><stop offset="0.45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#050a1a" stop-opacity="0.42"/>
+      </linearGradient>
+    </defs>
+    <g>${body}<rect x="${bb.x}" y="${bb.y}" width="${bb.w}" height="${bb.h}" fill="url(#${id}g)" mask="url(#${id}m)"/></g>`;
+}
+
+// rotate a whole pose around a point (degrees, + = counter-clockwise on screen)
+function rotatePose(pose, deg, about, shift = [0, 0]) {
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), r = {};
+  for (const k in pose) {
+    const p = pose[k];
+    if (!Array.isArray(p)) { r[k] = p; continue; }
+    const dx = p[0] - about[0], dy = p[1] - about[1];
+    r[k] = [about[0] + dx * c - dy * s + shift[0], about[1] + dx * s + dy * c + shift[1]];
+  }
+  return r;
+}
+const mirror = (pose) => {
+  const r = {};
+  for (const k in pose) {
+    const p = pose[k];
+    if (!Array.isArray(p)) { r[k] = p; continue; }
+    const swapped = k.endsWith('L') ? k.slice(0, -1) + 'R' : k.endsWith('R') ? k.slice(0, -1) + 'L' : k;
+    r[swapped] = [-p[0], p[1]];
+  }
+  if (pose.far) r.far = pose.far === 'L' ? 'R' : 'L';
+  return r;
+};
+
+// ---------------------------------------------------------------- kits and poses
+const KEEPER = { shirt: '#f2c230', trim: '#15161b', shorts: '#15161b', socks: '#f2c230', sockBand: '#15161b', boots: '#1b1c22', bootTrim: '#f2c230', gloves: '#f4f4f4', gloveStrap: '#f2c230', skin: '#b97a56', hair: '#2a1d16', number: '1' };
+const TAKER = { shirt: '#1fb59f', trim: '#f4f4f4', shorts: '#f1f1f1', socks: '#1fb59f', sockBand: '#f4f4f4', boots: '#f4f4f4', bootTrim: '#e2483a', skin: '#7a4a2e', hair: '#141010', number: '10', name: 'ORTIZ' };
+
+const STAND = { head: [0, 0.935], neck: [0, 0.84], sL: [-0.115, 0.8], sR: [0.115, 0.8], eL: [-0.15, 0.62], hL: [-0.16, 0.47], eR: [0.15, 0.62], hR: [0.16, 0.47],
+  hipL: [-0.055, 0.51], kL: [-0.065, 0.28], aL: [-0.07, 0.045], tL: [-0.09, 0.01], hipR: [0.055, 0.51], kR: [0.065, 0.28], aR: [0.07, 0.045], tR: [0.09, 0.01] };
+const READY = { head: [0, 0.875], neck: [0, 0.79], sL: [-0.12, 0.75], sR: [0.12, 0.75], eL: [-0.235, 0.63], hL: [-0.3, 0.53], eR: [0.235, 0.63], hR: [0.3, 0.53],
+  hipL: [-0.06, 0.46], kL: [-0.15, 0.27], aL: [-0.16, 0.045], tL: [-0.19, 0.012], hipR: [0.06, 0.46], kR: [0.15, 0.27], aR: [0.16, 0.045], tR: [0.19, 0.012] };
+const SIDESTEP = { head: [0.05, 0.885], neck: [0.045, 0.8], sL: [-0.075, 0.76], sR: [0.165, 0.76], eL: [-0.19, 0.64], hL: [-0.25, 0.54], eR: [0.28, 0.64], hR: [0.345, 0.54],
+  hipL: [-0.01, 0.48], kL: [-0.1, 0.3], aL: [-0.06, 0.1], tL: [-0.09, 0.07], hipR: [0.11, 0.48], kR: [0.2, 0.27], aR: [0.24, 0.045], tR: [0.27, 0.012] };
+const STRETCH = { head: [0, 0.9], neck: [0, 0.82], sL: [-0.11, 0.79], sR: [0.11, 0.79], eL: [-0.12, 0.98], hL: [-0.08, 1.14], eR: [0.11, 0.98], hR: [0.07, 1.14],
+  hipL: [-0.055, 0.5], kL: [-0.07, 0.27], aL: [-0.08, 0.04], tL: [-0.1, 0.0], hipR: [0.055, 0.5], kR: [0.15, 0.31], aR: [0.11, 0.09], tR: [0.13, 0.06] };
+const LOWREACH = { ...STRETCH, eL: [-0.05, 0.98], hL: [0.02, 1.13], eR: [0.15, 0.97], hR: [0.12, 1.13] };
+const CLUTCH = { ...STRETCH, eL: [-0.17, 0.66], hL: [-0.03, 0.66], eR: [0.16, 0.65], hR: [0.04, 0.64], kL: [-0.13, 0.29], aL: [-0.06, 0.07], tL: [-0.07, 0.03], kR: [0.12, 0.3], aR: [0.17, 0.08], tR: [0.2, 0.06] };
+const RECOVER = { head: [0.025, 0.765], neck: [0.02, 0.68], sL: [-0.1, 0.645], sR: [0.135, 0.64], eL: [-0.16, 0.48], hL: [-0.18, 0.33], eR: [0.2, 0.48], hR: [0.18, 0.33],
+  hipL: [-0.04, 0.37], kL: [-0.1, 0.05], aL: [-0.06, 0.02], tL: [-0.05, 0.0], hipR: [0.07, 0.37], kR: [0.19, 0.31], aR: [0.19, 0.045], tR: [0.22, 0.012] };
+// side views, facing screen-right; the left side faces the camera so the far side is R
+const RUN = { far: 'R', head: [0.075, 0.9], neck: [0.055, 0.82], sL: [0.035, 0.79], sR: [0.045, 0.795], eL: [-0.08, 0.66], hL: [-0.02, 0.555], eR: [0.12, 0.66], hR: [0.2, 0.73],
+  hipL: [0, 0.5], kL: [0.15, 0.37], aL: [0.11, 0.15], tL: [0.19, 0.12], hipR: [0, 0.5], kR: [-0.07, 0.29], aR: [-0.2, 0.17], tR: [-0.25, 0.12] };
+const BACKSWING = { far: 'R', head: [-0.015, 0.9], neck: [-0.01, 0.82], sL: [0, 0.79], sR: [0.01, 0.795], eL: [-0.12, 0.68], hL: [-0.2, 0.6], eR: [0.13, 0.74], hR: [0.25, 0.77],
+  hipL: [0, 0.5], kL: [-0.07, 0.29], aL: [-0.27, 0.36], tL: [-0.32, 0.31], hipR: [0.02, 0.49], kR: [0.08, 0.27], aR: [0.06, 0.04], tR: [0.14, 0.01] };
+const FOLLOW = { far: 'R', head: [-0.07, 0.89], neck: [-0.05, 0.81], sL: [-0.04, 0.78], sR: [-0.03, 0.785], eL: [-0.19, 0.73], hL: [-0.31, 0.71], eR: [0.09, 0.67], hR: [0.12, 0.55],
+  hipL: [0, 0.5], kL: [0.19, 0.59], aL: [0.39, 0.67], tL: [0.45, 0.71], hipR: [0.02, 0.49], kR: [0.07, 0.27], aR: [0.05, 0.04], tR: [0.13, 0.01] };
+// in-game shooter seen from behind, just after contact
+const HERO_SHOT = { head: [-0.025, 0.9], neck: [-0.02, 0.815], sL: [-0.135, 0.775], sR: [0.1, 0.79], eL: [-0.21, 0.63], hL: [-0.235, 0.5], eR: [0.24, 0.75], hR: [0.37, 0.73],
+  hipL: [-0.06, 0.5], kL: [-0.2, 0.53], aL: [-0.34, 0.585], tL: [-0.38, 0.61], hipR: [0.05, 0.495], kR: [0.07, 0.27], aR: [0.075, 0.045], tR: [0.075, 0.0] };
+
+// ---------------------------------------------------------------- hero scene
+function hero() {
+  // simple pinhole camera 7 m behind the spot, 2.4 m up; Z = distance from the camera
+  const f = 1296, camH = 2.4, hz = 360, cx = 800;
+  const pr = (X, Y, Z) => [cx + f * X / Z, hz + f * (camH - Y) / Z];
+  const pt = (X, Y, Z) => pr(X, Y, Z).join(',');
+  const s = [];
+  s.push(`<defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#02040b"/><stop offset="1" stop-color="#16224a"/></linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b7a35"/><stop offset="1" stop-color="#1c5a26"/></linearGradient>
+    <radialGradient id="pool" cx="0.5" cy="0.55" r="0.6"><stop offset="0" stop-color="#fff3c4" stop-opacity="0.22"/><stop offset="1" stop-color="#fff3c4" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glow" r="0.5"><stop offset="0" stop-color="#fffbe8"/><stop offset="0.15" stop-color="#fff2c0" stop-opacity="0.85"/><stop offset="1" stop-color="#fff2c0" stop-opacity="0"/></radialGradient>
+    <radialGradient id="vig" r="0.75"><stop offset="0.6" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.55"/></radialGradient>
+    <linearGradient id="trail" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity="0.75"/></linearGradient>
+    <pattern id="mesh" width="9" height="9" patternUnits="userSpaceOnUse"><path d="M0 0L9 9M9 0L0 9" stroke="#e8eef8" stroke-opacity="0.38" stroke-width="0.8"/></pattern>
+    <filter id="blur"><feGaussianBlur stdDeviation="3"/></filter>
+    <filter id="soft"><feGaussianBlur stdDeviation="1.2"/></filter>
+  </defs>`);
+  s.push(`<rect width="1600" height="900" fill="url(#sky)"/>`);
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 120; i++) s.push(`<rect x="${rnd() * 1600}" y="${rnd() * 90}" width="1.4" height="1.4" fill="#fff" opacity="${0.2 + rnd() * 0.5}"/>`);
+
+  // stands: three tiers rising away behind the goal, with a crowd on each
+  const tiers = [[24, 1.2, 31, 5.5], [31.5, 6.2, 38, 10.2], [38.5, 10.8, 46, 15.5]];
+  const crowdCols = ['#1fb59f', '#1fb59f', '#178f7e', '#f2c230', '#d9a826', '#e9edf5', '#2b3550', '#3b4766', '#1d2438'];
+  for (const [z0, y0, z1, y1] of tiers) {
+    s.push(`<path d="M${pt(-70, y0, z0)} L${pt(70, y0, z0)} L${pt(70, y1, z1)} L${pt(-70, y1, z1)}Z" fill="#141b2e"/>`);
+    s.push(`<path d="M${pt(-70, y0 - 0.6, z0 - 0.3)} L${pt(70, y0 - 0.6, z0 - 0.3)} L${pt(70, y0, z0)} L${pt(-70, y0, z0)}Z" fill="#232c47"/>`);
+    const rows = 18;
+    for (let r = 0; r < rows; r++) {
+      const t = (r + 0.5) / rows, z = z0 + (z1 - z0) * t, y = y0 + (y1 - y0) * t;
+      const step = 0.42;
+      for (let x = -70; x < 70; x += step) {
+        const [sx, sy] = pr(x + rnd() * 0.3, y + 0.25, z);
+        if (sx < -10 || sx > 1610) continue;
+        if (rnd() < 0.08) continue;
+        const rr = (f * 0.14 / z) * (0.8 + rnd() * 0.35);
+        const col = crowdCols[Math.floor(rnd() * crowdCols.length)];
+        const lift = rnd() < 0.12 ? rr * 1.4 : 0;   // some fans standing / arms up
+        s.push(`<circle cx="${sx.toFixed(1)}" cy="${(sy - lift).toFixed(1)}" r="${rr.toFixed(2)}" fill="${col}" opacity="${0.4 + 0.35 * (1 - t)}"/>`);
+      }
+    }
+  }
+  // a few camera flashes and scarves
+  for (let i = 0; i < 26; i++) s.push(`<circle cx="${rnd() * 1600}" cy="${80 + rnd() * 330}" r="${1 + rnd() * 1.8}" fill="#fff" opacity="${0.5 + rnd() * 0.5}"/>`);
+  s.push(`<rect x="0" y="0" width="1600" height="900" fill="#0a1020" opacity="0.32"/>`);
+
+  // floodlight heads with glow
+  for (const x of [120, 1480]) {
+    s.push(`<rect x="${x - 60}" y="16" width="120" height="44" rx="4" fill="#d9d9d0"/>`);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) s.push(`<circle cx="${x - 45 + i * 30}" cy="${28 + j * 20}" r="8" fill="#fffdf0"/>`);
+    s.push(`<circle cx="${x}" cy="38" r="260" fill="url(#glow)" opacity="0.55"/>`);
+    s.push(`<path d="M${x - 40},60 L${x < 800 ? 820 : 780},540 L${x < 800 ? 980 : 620},540 L${x + 40},60Z" fill="#fff8d8" opacity="0.035"/>`);
+  }
+
+  // pitch with mowing stripes across
+  s.push(`<path d="M${pt(-80, 0, 23.6)} L${pt(80, 0, 23.6)} L1600,900 L0,900Z" fill="url(#grass)"/>`);
+  for (let z = 23.6, i = 0; z > 3; z -= 2.2, i++) {
+    if (i % 2) continue;
+    const z2 = Math.max(z - 2.2, 3);
+    s.push(`<path d="M${pt(-80, 0, z)} L${pt(80, 0, z)} L${pt(80, 0, z2)} L${pt(-80, 0, z2)}Z" fill="#3b9a45" opacity="0.28"/>`);
+  }
+  s.push(`<ellipse cx="800" cy="620" rx="900" ry="300" fill="url(#pool)"/>`);
+  // ad boards
+  const b0 = pr(-60, 0, 22), b1 = pr(60, 1.0, 22);
+  s.push(`<rect x="${b0[0]}" y="${b1[1]}" width="${b1[0] - b0[0]}" height="${b0[1] - b1[1]}" fill="#0d1a36"/>`);
+  for (let i = -6; i < 6; i++) {
+    const a = pr(i * 10 + 0.4, 0.85, 22), c = pr(i * 10 + 9.6, 0.15, 22);
+    const gold = (i + 6) % 2 === 0;
+    s.push(`<rect x="${a[0]}" y="${a[1]}" width="${c[0] - a[0]}" height="${c[1] - a[1]}" fill="${gold ? '#f2c230' : '#1fb59f'}" opacity="0.9"/>`);
+    s.push(`<text x="${(a[0] + c[0]) / 2}" y="${c[1] - 9}" text-anchor="middle" font-family="'Arial Black', sans-serif" font-size="22" letter-spacing="3" fill="#0d1a36">${gold ? 'PENALTY NIGHT' : 'NIGHT CUP'}</text>`);
+  }
+
+  // pitch lines
+  const line = (pts) => s.push(`<path d="M${pts.map((p) => pt(p[0], 0, p[1])).join(' L')}" fill="none" stroke="#f2f6ee" stroke-opacity="0.85" stroke-width="3"/>`);
+  line([[-60, 18], [60, 18]]);
+  line([[-9.16, 18], [-9.16, 12.5], [9.16, 12.5], [9.16, 18]]);
+  line([[-20.16, 18], [-20.16, 3.2]]); line([[20.16, 18], [20.16, 3.2]]);
+  const spot = pr(0, 0, 7);
+  s.push(`<ellipse cx="${spot[0]}" cy="${spot[1]}" rx="9" ry="3.5" fill="#f2f6ee" opacity="0.9"/>`);
+
+  // goal: net box behind the frame, then the frame
+  const gw = 3.66, gh = 2.44, gz = 18, nz = 20.2, nh = 2.0;
+  s.push(`<path d="M${pt(-gw, 0, nz)} L${pt(gw, 0, nz)} L${pt(gw, nh, nz)} L${pt(-gw, nh, nz)}Z" fill="#0d1428" opacity="0.55"/>`);
+  for (const face of [
+    [[-gw, 0, nz], [gw, 0, nz], [gw, nh, nz], [-gw, nh, nz]],
+    [[-gw, 0, gz], [-gw, 0, nz], [-gw, nh, nz], [-gw, gh, gz]],
+    [[gw, 0, gz], [gw, 0, nz], [gw, nh, nz], [gw, gh, gz]],
+    [[-gw, gh, gz], [gw, gh, gz], [gw, nh, nz], [-gw, nh, nz]],
+  ]) s.push(`<path d="M${face.map((p) => pt(...p)).join(' L')}Z" fill="url(#mesh)"/>`);
+  // ball bulging the net? no: it is saved. keeper's shadows (two floodlights)
+  const post = (X) => { const a = pr(X, 0, gz), b = pr(X, gh, gz); s.push(`<rect x="${a[0] - 5}" y="${b[1]}" width="10" height="${a[1] - b[1]}" fill="#f6f7f9"/>`); };
+  post(-gw); post(gw);
+  const l = pr(-gw, gh, gz), r = pr(gw, gh, gz);
+  s.push(`<rect x="${l[0] - 5}" y="${l[1] - 5}" width="${r[0] - l[0] + 10}" height="10" fill="#f6f7f9"/>`);
+  s.push(`<rect x="${l[0] - 5}" y="${l[1] - 5}" width="${r[0] - l[0] + 10}" height="3" fill="#ffffff"/>`);
+
+  // keeper: high dive to screen-right, ball at the gloves
+  const kpx = f * 1.9 / gz;
+  const kp = pr(1.3, 0, gz);
+  const dive = rotatePose(STRETCH, -66, [0, 0.5], [0, 0.0]);
+  const kfoot = pr(1.0, 0, gz);
+  s.push(`<ellipse cx="${kfoot[0] + 10}" cy="${kfoot[1]}" rx="${kpx * 0.45}" ry="7" fill="#000" opacity="0.35" filter="url(#soft)"/>`);
+  s.push(`<ellipse cx="${kfoot[0] + 50}" cy="${kfoot[1] + 2}" rx="${kpx * 0.35}" ry="5" fill="#000" opacity="0.2" filter="url(#soft)"/>`);
+  s.push(drawFigure(dive, KEEPER, kp[0] - 30, kp[1] - kpx * 0.22, kpx, { face: true, light: 1 }));
+  // ball at the keeper's fingertips plus a speed trail from the spot
+  const ballAt = [kp[0] - 30 + (dive.hR[0] + dive.hL[0]) / 2 * kpx + 30, kp[1] - kpx * 0.22 - (dive.hR[1] + dive.hL[1]) / 2 * kpx - 8];
+  s.push(`<path d="M${spot[0] + 30},${spot[1] - 28} Q${(spot[0] + ballAt[0]) / 2 + 90},${(spot[1] + ballAt[1]) / 2 - 140} ${ballAt[0]},${ballAt[1]}" stroke="url(#trail)" stroke-width="7" fill="none" stroke-linecap="round" opacity="0.7"/>`);
+  s.push(`<circle cx="${ballAt[0]}" cy="${ballAt[1]}" r="11" fill="#f8f8f8"/><path d="M${ballAt[0] - 4},${ballAt[1] - 3} l4,-4 l4,4 l-1.5,5 h-5Z" fill="#1b1c22"/>`);
+  s.push(`<circle cx="${ballAt[0]}" cy="${ballAt[1]}" r="26" fill="#fff" opacity="0.18" filter="url(#blur)"/>`);
+  // impact burst
+  for (let i = 0; i < 9; i++) {
+    const a = i / 9 * Math.PI * 2;
+    s.push(`<path d="M${ballAt[0] + Math.cos(a) * 18},${ballAt[1] + Math.sin(a) * 18} L${ballAt[0] + Math.cos(a) * 34},${ballAt[1] + Math.sin(a) * 34}" stroke="#fff6cf" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>`);
+  }
+
+  // taker from behind, just after contact
+  const tz = 7.7, tpx = f * 1.8 / tz, tf = pr(-0.75, 0, tz);
+  s.push(`<ellipse cx="${tf[0] + 12}" cy="${tf[1] + 2}" rx="${tpx * 0.2}" ry="14" fill="#000" opacity="0.4" filter="url(#soft)"/>`);
+  s.push(`<ellipse cx="${tf[0] + 70}" cy="${tf[1] + 6}" rx="${tpx * 0.22}" ry="10" fill="#000" opacity="0.22" filter="url(#soft)" transform="rotate(-8 ${tf[0] + 70} ${tf[1] + 6})"/>`);
+  s.push(drawFigure(HERO_SHOT, TAKER, tf[0], tf[1], tpx, { back: true, light: 1 }));
+
+  // HUD: scoreboard top-left
+  s.push(`<g font-family="system-ui, -apple-system, sans-serif">
+    <rect x="28" y="88" width="300" height="86" rx="12" fill="#0b1224" opacity="0.88" stroke="#ffffff22"/>
+    <rect x="44" y="104" width="10" height="24" rx="2" fill="#f2c230"/><text x="64" y="123" font-size="18" font-weight="700" fill="#fff">YOU</text>
+    <text x="178" y="125" font-size="26" font-weight="800" fill="#fff" text-anchor="middle">3 – 2</text>
+    <text x="300" y="123" font-size="18" font-weight="700" fill="#fff" text-anchor="end">CPU</text><rect x="306" y="104" width="10" height="24" rx="2" fill="#1fb59f"/>
+    ${[1, 1, 0, 1, -1].map((v, i) => `<circle cx="${52 + i * 20}" cy="152" r="7" fill="${v === 1 ? '#3ecf6e' : v === 0 ? '#e2483a' : '#ffffff22'}"/>`).join('')}
+    ${[1, 0, 1, 0, -1].map((v, i) => `<circle cx="${226 + i * 20}" cy="152" r="7" fill="${v === 1 ? '#3ecf6e' : v === 0 ? '#e2483a' : '#ffffff22'}" ${i === 3 ? 'stroke="#fff" stroke-width="2"' : ''}/>`).join('')}
+    <text x="178" y="157" font-size="11" fill="#8f9ab3" text-anchor="middle">ROUND 4</text>
+  </g>`);
+
+  // result card right side
+  const cxR = 1180, cyR = 520;
+  s.push(`<g font-family="system-ui, -apple-system, sans-serif">
+    <rect x="${cxR}" y="${cyR}" width="392" height="352" rx="16" fill="#0b1224" opacity="0.93" stroke="#f2c23066" stroke-width="2"/>
+    <text x="${cxR + 28}" y="${cyR + 62}" font-size="46" font-weight="900" fill="#f2c230" letter-spacing="2">SAVED!</text>
+    <text x="${cxR + 28}" y="${cyR + 92}" font-size="16" fill="#c8d0e2">You read it: high to your left, full stretch.</text>
+    <g transform="translate(${cxR + 28}, ${cyR + 118})">
+      <rect x="0" y="0" width="336" height="120" fill="#13203d" rx="6"/>
+      <path d="M8 118 V10 H328 V118" stroke="#fff" stroke-width="5" fill="none"/>
+      <path d="M8 10 L328 10" stroke="#fff" stroke-width="5"/>
+      ${Array.from({ length: 9 }, (_, i) => `<path d="M${8 + i * 40} 10 V118" stroke="#ffffff18"/>`).join('')}
+      ${Array.from({ length: 3 }, (_, i) => `<path d="M8 ${40 + i * 30} H328" stroke="#ffffff18"/>`).join('')}
+      <circle cx="262" cy="34" r="12" fill="none" stroke="#1fb59f" stroke-width="3" stroke-dasharray="4 3"/>
+      <circle cx="252" cy="40" r="9" fill="#fff"/>
+      <rect x="226" y="24" width="56" height="36" rx="18" fill="#f2c230" opacity="0.25"/>
+      <text x="168" y="106" fill="#8f9ab3" font-size="12" text-anchor="middle">○ aimed  ● went  ▬ your gloves</text>
+    </g>
+    <text x="${cxR + 28}" y="${cyR + 270}" font-size="14" fill="#8f9ab3">Dive started 0.12 s after the plant foot</text>
+    <rect x="${cxR + 28}" y="${cyR + 290}" width="156" height="42" rx="21" fill="#f2c230"/><text x="${cxR + 106}" y="${cyR + 317}" font-size="16" font-weight="700" fill="#15161b" text-anchor="middle">Next kick</text>
+    <rect x="${cxR + 196}" y="${cyR + 290}" width="168" height="42" rx="21" fill="none" stroke="#ffffff55"/><text x="${cxR + 280}" y="${cyR + 317}" font-size="16" font-weight="600" fill="#fff" text-anchor="middle">▶ Replay</text>
+  </g>`);
+
+  s.push(`<rect width="1600" height="900" fill="url(#vig)"/>`);
+  document.getElementById('hero').innerHTML = s.join('');
+}
+
+// ---------------------------------------------------------------- lineup
+function lineup() {
+  const s = [`<rect width="900" height="560" fill="#0f1628"/>`];
+  const ground = 520, top = 40;
+  const keeperH = ground - top, takerH = keeperH * 1.8 / 1.92;
+  for (let i = 0; i <= 8; i++) {
+    const y = ground - keeperH * i / 7.5;
+    if (i > 7.5) break;
+    s.push(`<path d="M30 ${y} H870" stroke="#ffffff${i === 0 ? '44' : '14'}" stroke-dasharray="${i ? '4 6' : ''}"/><text x="36" y="${y - 4}" font-size="11" fill="#8f9ab3" font-family="system-ui">${i}</text>`);
+  }
+  s.push(`<path d="M30 ${top} H870" stroke="#ffffff30" stroke-dasharray="4 6"/><text x="36" y="${top - 4}" font-size="11" fill="#8f9ab3" font-family="system-ui">7.5 heads · 1.92 m</text>`);
+  s.push(drawFigure(STAND, KEEPER, 200, ground, keeperH, { face: true }));
+  s.push(drawFigure(STAND, TAKER, 420, ground, takerH, { face: true }));
+  s.push(drawFigure(STAND, TAKER, 620, ground, takerH, { back: true }));
+  s.push(drawFigure({ ...RUN, ...STAND, far: 'R', sL: [0.0, 0.8], sR: [0.01, 0.8], eL: [0.0, 0.62], hL: [0.02, 0.47], eR: [0.01, 0.62], hR: [0.03, 0.47], hipL: [0, 0.51], hipR: [0, 0.51], kL: [0.005, 0.28], kR: [0, 0.28], aL: [0, 0.045], aR: [-0.005, 0.045], tL: [0.09, 0.01], tR: [0.085, 0.01] }, TAKER, 790, ground, takerH, {}));
+  const lab = (x, t) => s.push(`<text x="${x}" y="548" font-size="13" fill="#c8d0e2" text-anchor="middle" font-family="system-ui">${t}</text>`);
+  lab(200, 'Keeper · front'); lab(420, 'Taker · front'); lab(620, 'Taker · back'); lab(790, 'Taker · side');
+  document.getElementById('lineup').innerHTML = s.join('');
+}
+
+// ---------------------------------------------------------------- pose strip
+function poses() {
+  const list = [
+    ['Idle / ready', 'keeper_idle', READY, KEEPER, 0, {}],
+    ['Sidestep', 'keeper_sidestep', SIDESTEP, KEEPER, 0, {}],
+    ['High dive', 'keeper_dive_high_R', STRETCH, KEEPER, -64, { y: 0.32 }],
+    ['Low dive', 'keeper_dive_low_R', LOWREACH, KEEPER, -84, { y: 0.06 }],
+    ['Landing', 'keeper_land_R', CLUTCH, KEEPER, -90, { y: -0.32 }],
+    ['Recovery', 'keeper_recover', RECOVER, KEEPER, 0, {}],
+    ['Run-up', 'taker_runup', RUN, TAKER, 0, {}],
+    ['Plant + backswing', 'taker_kick (0.4)', BACKSWING, TAKER, 0, {}],
+    ['Kick follow-through', 'taker_kick (1.0)', FOLLOW, TAKER, 0, {}],
+  ];
+  const el = document.getElementById('poses');
+  el.innerHTML = list.map(([name, clip, pose, kit, rot, o]) => {
+    let p = pose;
+    if (rot) p = rotatePose(pose, rot, [0, 0.5], [0, o.y ?? 0]);
+    const px = 150;
+    const ox = rot ? 100 : 100, oy = 205;
+    return `<div class="pose"><svg viewBox="0 0 200 220"><rect width="200" height="220" fill="#0b1224"/><path d="M0 ${oy} H200" stroke="#2f8a3c" stroke-width="3"/>${drawFigure(p, kit, rot ? 70 : ox, oy, px, { face: true })}</svg><b>${name}</b><span>${clip}</span></div>`;
+  }).join('');
+}
+
+hero(); lineup(); poses();
+</script>
+</body>
+</html>

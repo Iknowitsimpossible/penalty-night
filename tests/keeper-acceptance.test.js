@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { createBallState, launchVelocity, stepBall } from '../src/physics/ball.js';
 import { newShot, coolDown, collideStep, judge } from '../src/physics/collisions.js';
-import { makePerson, KITS, newKeeper, poseKeeper, planDive, updateKeeper, keeperSpheres } from '../src/render/people.js';
+import { makePerson, KITS, newKeeper, poseKeeper, planDive, updateKeeper, keeperSpheres } from '../src/body/people.js';
 import { createRng } from '../src/core/random.js';
 import { POST_R, R, HALF, GOAL_H } from '../src/core/constants.js';
 import { SWIPE } from '../src/input/swipe.js';

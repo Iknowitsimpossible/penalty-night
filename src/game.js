@@ -5,19 +5,22 @@ import { createKeyboardAim } from './input/keyboard.js';
 import { R, SPOT_Z, KEEPER_Z, RUNUP, COMMIT } from './core/constants.js';
 import { clamp, lerp } from './core/math.js';
 import { createRng } from './core/random.js';
-import { createWorld } from './render/world.js';
-import { createEffects, GOLD } from './render/effects.js';
-import { makePerson, KITS, animateRunup, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './render/people.js';
+import { createRenderer2D } from './view2d/renderer.js';
+import { createDirector } from './view2d/director.js';
+import { screenToGoal as tapToGoal, project } from './view2d/projection.js';
+import { createNet } from './view2d/net.js';
+import { createEffects, GOLD } from './view2d/effects.js';
+import { makePerson, KITS, animateRunup, poseStriker, newKeeper, poseKeeper, hideKeeper, planDive, updateKeeper, keeperSpheres } from './body/people.js';
 import { createBallState, launchVelocity, stepBall, predictCrossing } from './physics/ball.js';
 import { newShot, coolDown, collideStep, judge } from './physics/collisions.js';
-import { createBallMesh, createBallTracking } from './render/ball.js';
-import { createCameraDirector } from './render/camera.js';
-import { createReplays } from './render/replay.js';
-import { createQualityGovernor } from './render/quality.js';
+import { createBallTracking } from './view2d/ball.js';
+import { createReplays } from './body/replay.js';
+import { createQualityGovernor } from './view2d/quality.js';
 import { createAudio } from './audio/sfx.js';
 import { shootoutWinner, goals } from './rules/shootout.js';
 import { planShot, reconsider, executeShot } from './ai/taker.js';
 import { keeperPlan, readDive } from './ai/keeper.js';
+import { hintSkill, shotHint } from './ai/hint.js';
 import { STYLE_KEYS, styleOf } from './ai/styles.js';
 import { LEVELS } from './ai/levels.js';
 import { explainKick, explainSave } from './feedback/explain.js';
@@ -27,6 +30,7 @@ import { createFeedbackCard } from './ui/feedback-card.js';
 import { createSettingsPanel } from './ui/settings-panel.js';
 import { hubView } from './ui/cup-hub.js';
 import { createHud } from './ui/hud.js';
+import { createModeCarousel } from './ui/mode-carousel.js';
 import { loadSettings, saveSettings, shouldAutoReplay, celebrationLength, reducedMotion } from './ui/settings.js';
 import { TEAMS, createCup, recordResult, currentFixture } from './tournament/cup.js';
 
@@ -46,27 +50,29 @@ const settings = loadSettings(storage);
 const motionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
 let motionReduced = false;
 
-// ------------------------------------------------------------------ stadium (render/world.js)
+// ------------------------------------------------------------------ stadium (view2d/)
+// Everything is drawn on one 2D canvas through a pinhole camera per shot.
+// The bodies below are three.js objects only for their maths (joints and
+// collision spheres); nothing renders the scene they live in.
 const stage = $('stage');
 const canvas = $('scene');
-let world;
-try {
-  world = createWorld(canvas);
-} catch (e) {
-  $('fail').hidden = false; $('menu').hidden = true; return;
-}
-const { renderer, scene, camera, glowTex, net, updateNet, crowdSpots, paintCrowd, updateCrowd, cheer, lighten, towers, updateTowers, dummy, tmpColor } = world;
-// The camera director (render/camera.js) picks and glides between shots.
-const cam = createCameraDirector(camera);
+const view = createRenderer2D(canvas);
+const scene = new THREE.Scene();
+const net = createNet();
+const cheer = { you: 0, cpu: 0 };   // how loudly each end is celebrating, 0..1
+const towers = [0, 1, 2, 3].map(() => ({ on: 1, shown: 1, flare: 0 }));   // floodlights (view2d/stadium.js TOWERS)
+const lighten = (hex, t) => new THREE.Color(hex).lerp(new THREE.Color(0xffffff), t).getHex();
+// The camera director (view2d/director.js) picks the shot and cuts between them.
+const cam = createDirector();
 // Net bulges are recorded so a replay can show them again.
 function bulgeNet(at, dir, strength) {
   replays.noteNet(at, dir, strength);
-  world.bulgeNet(at, dir, strength);
+  net.bulge(at, dir, strength);
 }
 
-// ------------------------------------------------------------------ celebration effects (render/effects.js)
+// ------------------------------------------------------------------ celebration effects (view2d/effects.js)
 let cpuPal = [0x2fc6b4, 0x9ff2e6, 0xffffff];   // confetti for the opponent's fans
-const effects = createEffects(world, { behindGoal: () => cam.goal === 'keeper', onFirework: () => sfx.pop() });
+const effects = createEffects({ behindGoal: () => cam.goal === 'keeper', onFirework: () => sfx.pop() });
 const { updateConfetti, updateFireworks, updateFlashes } = effects;
 // With reduced motion: no confetti, fireworks or camera flashes.
 const burstConfetti = (...args) => { if (!motionReduced) effects.burstConfetti(...args); };
@@ -80,7 +86,7 @@ function applyMotion() {
 if (motionQuery && motionQuery.addEventListener) motionQuery.addEventListener('change', applyMotion);
 applyMotion();
 
-// ------------------------------------------------------------------ people (render/people.js)
+// ------------------------------------------------------------------ people (body/people.js)
 const keepers = { cpu: makePerson(scene, KITS.cpuKeeper), you: makePerson(scene, KITS.youKeeper) };
 const taker = makePerson(scene, KITS.cpuTaker);
 const striker = makePerson(scene, KITS.youTaker);   // you: only seen in replays and celebrations
@@ -88,13 +94,12 @@ striker.root.visible = false;
 const withLanding = (k) => { k.onLand = () => sfx.land(); return k; };
 let keeper = withLanding(newKeeper(keepers.cpu));
 
-// ------------------------------------------------------------------ ball (physics/ball.js, render/ball.js)
-const ball = { ...createBallState(), mesh: createBallMesh(world) };
-const ballTracking = createBallTracking(world);
+// ------------------------------------------------------------------ ball (physics/ball.js, view2d/ball.js)
+const ball = { ...createBallState(), roll: 0 };   // roll: how far the panels have turned (radians)
+const ballTracking = createBallTracking();
 let goalFade = 0;
 function placeBall() {
   ball.pos.set(0, R, SPOT_Z); ball.vel.set(0, 0, 0); ball.spin = 0; ball.moving = false;
-  ball.mesh.position.copy(ball.pos);
 }
 
 function launch(target, T, spin) {
@@ -109,7 +114,7 @@ function collide() {
   const spheres = keeper.active ? keeperSpheres(keeper) : null;
   collideStep(ball, shot, spheres, rng, {
     post: () => { sfx.post(); cam.shake(0.06); if (debugView) debugView.contact('frame', shot, ball.pos, spheres); },
-    save: () => { sfx.save(); cam.shake(0.035); if (debugView) debugView.contact('keeper', shot, ball.pos, spheres); },
+    save: () => { sfx.save(); cam.shake(0.035); effects.impact(ball.pos); if (debugView) debugView.contact('keeper', shot, ball.pos, spheres); },
     net: (p, v, strength) => { bulgeNet(p, v, strength); sfx.net(); cam.shake(0.02); },
   });
 }
@@ -156,7 +161,7 @@ function dressOpponent(o) {
   taker.mats.shorts.color.setHex(o.color === 0xf0f0f0 ? 0x1b2340 : 0xf1f1f1);
   const gk = col.clone().lerp(new THREE.Color(0x0b0d14), 0.45);
   keepers.cpu.mats.shirt.color.copy(gk); keepers.cpu.mats.socks.color.copy(gk);
-  paintCrowd(o.color);
+  view.setCpuColor('#' + col.getHexString());
   cpuPal = [o.color, lighten(o.color, 0.5), 0xffffff];
   stage.style.setProperty('--cpu', '#' + col.getHexString());
   $('cpuTag').textContent = o.code;
@@ -203,7 +208,9 @@ function setupYourKick() {
   placeBall();
   hideKeeper(keepers.you); keepers.cpu.root.visible = true;
   keeper = withLanding(newKeeper(keepers.cpu, keeper)); keeper.active = true; keeper.maxShift = level.shift;
-  taker.root.visible = false; striker.root.visible = false;
+  // you are drawn from behind, waiting beside the ball
+  taker.root.visible = false; striker.root.visible = true;
+  strikeT = -1; poseStriker(striker, strikeT);
   cam.goal = 'shoot';
   if (match.mode === 'practice') {
     banner(LESSONS[practice.step].title, `Lesson ${practice.step + 1} of ${LESSONS.length}`, 'info', 1100);
@@ -229,7 +236,7 @@ function setupCpuKick() {
   match.turn = 'cpu'; match.phase = training ? 'ready' : 'runup'; match.timer = 0; shot = null;
   lineUp();
   match.plan = training ? drillPlan(trainingStage, rng) : planShot(match.opp.style, rng);
-  match.dive = null; match.committed = false;
+  match.dive = null; match.committed = false; match.strike = null; hintZone.t = null; hintZone.visible = false;
   keys.reset(1.0);
   placeBall();
   hideKeeper(keepers.cpu); keepers.you.root.visible = true;
@@ -243,7 +250,7 @@ function setupCpuKick() {
     hint('');
     $('readyBtn').hidden = false;
     // Stage 1 shows where the shot is going.
-    if (match.plan.shown) { cornerHint.position.set(match.plan.x, match.plan.y, 0.05); cornerHint.visible = true; }
+    if (match.plan.shown) { Object.assign(cornerHint, { x: match.plan.x, y: match.plan.y, z: 0.05, visible: true }); }
   } else if (match.mode === 'practice') {
     banner(LESSONS[practice.step].title, `Lesson ${practice.step + 1} of ${LESSONS.length}`, 'info', 1100);
     hint('');
@@ -265,15 +272,10 @@ function trySkip() {
 }
 const canDive = () => match.turn === 'cpu' && (match.phase === 'runup' || match.phase === 'flight') && !keeper.dive && !post;
 // Where a screen point lands in the goal mouth (the keeper's plane), or null.
+// The inverse of the camera's projection (view2d/projection.js).
 function screenToGoal(clientX, clientY) {
   const r = stage.getBoundingClientRect();
-  const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
-  raycaster.setFromCamera(ndc, camera);
-  const { origin: o, direction: d } = raycaster.ray;
-  if (Math.abs(d.z) < 1e-4) return null;
-  const t = (KEEPER_Z - o.z) / d.z;
-  if (t <= 0) return null;
-  return { x: clamp(o.x + d.x * t, -4.6, 4.6), y: clamp(o.y + d.y * t, 0, 2.9) };
+  return tapToGoal(view.camera, clientX - r.left, clientY - r.top);
 }
 // Mouse hover while keeping: a ring previews exactly where a click will dive.
 const hover = { x: 0, y: 1, on: false };
@@ -322,6 +324,7 @@ function shoot(kick) {
   markCoached();
   const { aimX, aimY, T, spin } = kick;
   startRecording(true);
+  strikeT = 0;
   // Keyboard aim is pixel-perfect, so harder keyboard kicks spread a little.
   const spread = kick.spread || 0;
   launch(new THREE.Vector3(aimX + rng.gauss() * spread, Math.max(0.11, aimY + rng.gauss() * spread * 0.7), 0), T, spin);
@@ -344,7 +347,6 @@ function startShot() {
 }
 
 // ---------------- their kick: you dive
-const raycaster = new THREE.Raycaster();
 function playerDive(e) {
   const g = screenToGoal(e.clientX, e.clientY);
   if (g) diveTo(g.x, g.y);
@@ -365,7 +367,8 @@ function diveTo(x, y) {
 }
 
 function cpuShoot() {
-  const k = executeShot(match.plan, match.opp.style, level, rng);
+  // the strike was decided at the plant foot (so the keeper hint can show it)
+  const k = match.strike || executeShot(match.plan, match.opp.style, level, rng);
   launch(new THREE.Vector3(k.target.x, k.target.y, 0), k.T, k.spin);
   sfx.kick(0.7); sfx.hush(false);
   startShot();
@@ -448,6 +451,7 @@ function requestReplay() {
 // After every kick: a short celebration, then (for your goals and your
 // saves) a slow-motion replay from a side camera. Tap or press space to skip.
 let post = null, party = false;
+let strikeT = -1;   // seconds since your striker hit the ball (-1: waiting)
 function startCelebration(kind, mine, scored) {
   post = { t: 0, kind, mine, scored, fx: [], run: null, cheerAt: -1,
     autoReplay: shouldAutoReplay(settings, { mine, kind }), replayed: false, dur: 1.9 };
@@ -542,10 +546,10 @@ function finishPost() {
   nextTurn();
 }
 
-// ------------------------------------------------------------------ replays (render/replay.js)
+// ------------------------------------------------------------------ replays (body/replay.js)
 const replays = createReplays({
   ball, poseKeeper, animateRunup, cam, reduced: () => motionReduced,
-  bulgeNet: (at, dir, s) => world.bulgeNet(at, dir, s),
+  bulgeNet: (at, dir, s) => net.bulge(at, dir, s),
 });
 function startRecording(mine) { replays.start(mine, keeper, mine ? striker : taker); }
 function startReplay() {
@@ -682,6 +686,14 @@ function setLevel(name) {
   $('levelNote').textContent = { amateur: 'Easy keeper', pro: 'Sharp keeper', legend: 'Elite keeper' }[name];
 }
 document.querySelectorAll('#levels button').forEach((b) => b.addEventListener('click', () => setLevel(b.dataset.level)));
+// The mode carousel remembers the last mode you picked.
+const modes = createModeCarousel({
+  root: $('picker'), track: $('modeTrack'), cards: [...document.querySelectorAll('#modeTrack .mode')],
+  prev: $('modePrev'), next: $('modeNext'), dots: [...document.querySelectorAll('.mode-dots button')],
+}, {
+  start: +storage.getItem('penaltyNight.mode') || 0,
+  onChange: (i) => { try { storage.setItem('penaltyNight.mode', String(i)); } catch (e) { /* storage unavailable */ } },
+});
 $('kickoff').addEventListener('click', () => { initAudio(); startMatch(quickOpponent()); });
 $('again').addEventListener('click', () => {
   initAudio();
@@ -756,31 +768,31 @@ for (const [id, dir] of [['stepLeft', -1], ['stepRight', 1]]) {
   b.addEventListener('pointercancel', stop);
 }
 
-const ringTex = (color) => world.canvasTexture(128, 128, (c, w, h) => {
-  c.strokeStyle = color; c.lineWidth = 9;
-  c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 12, 0, Math.PI * 2); c.stroke();
-});
-const makeRing = (tex, size) => {
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, fog: false }));
-  sp.scale.set(size, size, 1); sp.visible = false; sp.renderOrder = 11;
-  scene.add(sp);
-  return sp;
-};
+// Rings in the goal mouth, drawn on top of everything (view2d/renderer.js).
+const makeRing = (color, size, dot = false) => ({ x: 0, y: 0, z: 0, size, color, dot, opacity: 1, visible: false });
 // Stage 1 of keeper training: where the shot is going.
-const cornerHint = makeRing(ringTex('#2fc6b4'), 0.75);
+const cornerHint = makeRing('#2fc6b4', 0.75);
 // The confirmation pulse when a dive registers.
-const pulse = { sprite: makeRing(ringTex('#ffffff'), 0.5), t: 1 };
+const pulse = { sprite: makeRing('#ffffff', 0.5), t: 1 };
 function pulseDive(x, y, early) {
-  pulse.sprite.position.set(x, y, KEEPER_Z + 0.08);
-  pulse.sprite.material.color.setHex(early ? 0xef5a5f : 0xf2c230);
-  pulse.t = 0; pulse.sprite.visible = true;
+  Object.assign(pulse.sprite, { x, y, z: KEEPER_Z + 0.08, color: early ? '#ef5a5f' : '#f2c230', visible: true });
+  pulse.t = 0;
 }
+// The keeper hint (ai/hint.js): a soft zone that fades in at the plant foot
+// and stays until the kick is decided.
+const hintZone = { x: 0, y: 0, z: 0, size: 1, color: '#f2c230', zone: true, opacity: 0, visible: false, t: null };
 function updateKeeperMarkers(dt) {
+  if (hintZone.t !== null) {
+    hintZone.t += dt;
+    hintZone.visible = hintZone.t >= 0;
+    hintZone.opacity = Math.min(1, Math.max(0, hintZone.t / 0.15));
+    if (post || match.turn !== 'cpu' || (shot && shot.done)) { hintZone.t = null; hintZone.visible = false; }
+  }
   if (pulse.sprite.visible) {
     pulse.t += dt;
     const k = Math.min(pulse.t / 0.45, 1);
-    pulse.sprite.scale.setScalar(0.45 + 0.9 * k);
-    pulse.sprite.material.opacity = 1 - k;
+    pulse.sprite.size = 0.45 + 0.9 * k;
+    pulse.sprite.opacity = 1 - k;
     if (k >= 1) pulse.sprite.visible = false;
   }
   if (match.turn !== 'cpu' || post) cornerHint.visible = false;
@@ -866,26 +878,19 @@ const keys = createKeyboardAim({
   on: { shoot: (kick) => shoot(kick), dive: (x, y) => diveTo(x, y), wake: () => initAudio() },
 });
 const kb = keys.state;
-// The keyboard target: a ring in the goal mouth.
-const markerTex = world.canvasTexture(128, 128, (c, w, h) => {
-  c.strokeStyle = '#f6e7a8'; c.lineWidth = 9;
-  c.beginPath(); c.arc(w / 2, h / 2, w / 2 - 12, 0, Math.PI * 2); c.stroke();
-  c.fillStyle = '#f6e7a8'; c.beginPath(); c.arc(w / 2, h / 2, 9, 0, Math.PI * 2); c.fill();
-});
-const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: markerTex, transparent: true, depthTest: false, fog: false }));
-marker.scale.set(0.55, 0.55, 1); marker.visible = false; marker.renderOrder = 10;
-scene.add(marker);
+// The keyboard target: a ring with a dot in the goal mouth.
+const marker = makeRing('#f6e7a8', 0.55, true);
 function updateKeyboard(dt) {
   const m = keys.update(dt);
   const keepingNow = match.turn === 'cpu' && !keeper.dive && !post &&
     (match.phase === 'ready' || match.phase === 'runup' || match.phase === 'flight');
   if (kb.active) {
     marker.visible = !!m;
-    marker.position.set(kb.x, kb.y, m === 'keep' ? KEEPER_Z + 0.05 : 0);
+    Object.assign(marker, { x: kb.x, y: kb.y, z: m === 'keep' ? KEEPER_Z + 0.05 : 0 });
   } else {
     // mouse hover preview of where a click will dive
     marker.visible = hover.on && keepingNow;
-    marker.position.set(hover.x, hover.y, KEEPER_Z + 0.05);
+    Object.assign(marker, { x: hover.x, y: hover.y, z: KEEPER_Z + 0.05 });
   }
   if (match.mode === 'practice' && kb.active !== kb.shownAsKeys && practice.step < LESSONS.length) { kb.shownAsKeys = kb.active; renderPractice(); }
   hud.powerMeter(kb.active && m === 'shoot' ? kb : null);
@@ -991,6 +996,7 @@ document.addEventListener('keydown', (e) => {
     else if (k === 'v') { e.preventDefault(); requestReplay(); }
     return;
   }
+  if (match.phase === 'menu' && modes.keydown(e, k)) return;
   keys.keydown(e, k);
 });
 
@@ -1009,7 +1015,7 @@ function resetScenery() {
   hideKeeper(keepers.you); taker.root.visible = false; striker.root.visible = false;
   keepers.cpu.root.visible = true;
   keeper = newKeeper(keepers.cpu); keeper.active = true; poseKeeper(keeper);
-  marker.visible = false; cornerHint.visible = false; pulse.sprite.visible = false;
+  marker.visible = false; cornerHint.visible = false; pulse.sprite.visible = false; hintZone.visible = false; hintZone.t = null;
   $('readyBtn').hidden = true; $('stepper').hidden = true;
   placeBall();
 }
@@ -1018,6 +1024,7 @@ function showPicker() {
   resetScenery();
   towers.forEach((tw) => { tw.on = 1; });
   $('menu').hidden = false; $('attract').hidden = true; $('picker').hidden = false;
+  modes.layout();   // the cards had no size while the picker was hidden
   if (cam.goal !== 'pick') cam.goal = 'pick';
   showRecord();
 }
@@ -1028,12 +1035,14 @@ $('attract').addEventListener('click', () => {
 setLevel('pro');
 showRecord();
 
+let pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
-  renderer.setSize(w, h, false);
-  cam.resize(w, h);
+  view.resize(w, h, pixelRatio);
   pointer.resize(w, h, Math.min(window.devicePixelRatio || 1, 2));
 }
+// The ad boards use the display font: paint the stadium again once it has loaded.
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => view.rebake());
 window.addEventListener('resize', resize);
 resize();
 
@@ -1066,6 +1075,14 @@ function tick(dt) {
       const f = taker.root.position;
       burstConfetti(f.x + 0.15, 0.1, f.z, 0.15, 12, [0x2f6b35, 0x4d8a45, 0x6b5a3a], 2.4);
       match.plan = reconsider(match.plan, match.dive && match.dive.early ? match.dive : null, match.opp.style, level, rng, keeper.homeX);
+      // The plan is locked now, so the strike (with the taker's error) is
+      // decided here; in matches the keeper hint lights up around it.
+      match.strike = executeShot(match.plan, match.opp.style, level, rng);
+      if ((match.mode === 'quick' || match.mode === 'cup') && settings.keeperHints === 'on') {
+        const h = shotHint(match.strike.target, hintSkill(level), rng);
+        Object.assign(hintZone, { x: h.x, y: h.y, z: KEEPER_Z + 0.04, size: h.r * 2, opacity: 0, visible: false });
+        hintZone.t = -h.delay;
+      }
     }
     if (match.timer >= RUNUP) cpuShoot();
   }
@@ -1094,10 +1111,9 @@ function tick(dt) {
       if (shot) coolDown(shot, h);
       collide();
     }
-    ball.mesh.position.copy(ball.pos);
-    ball.mesh.rotation.y += ball.spin * sdt;
-    ball.mesh.rotation.x -= (ball.vel.z / R) * sdt * 0.15;
+    ball.roll += (ball.spin * 0.6 - (ball.vel.z / R) * 0.15) * sdt;
   }
+  if (strikeT >= 0 && match.turn === 'you' && !post) { strikeT += sdt; poseStriker(striker, strikeT); }
 
   if (shot && !replays.playing) {
     shot.t += sdt;
@@ -1113,12 +1129,10 @@ function tick(dt) {
   updateConfetti(dt, time);
   updateFireworks(dt);
   updateFlashes(dt);
-  updateNet(replays.playing ? dt * 0.5 : sdt);
+  effects.updateImpact(sdt);
+  net.update(replays.playing ? dt * 0.5 : sdt);
   if (motionReduced) { cheer.you = 0; cheer.cpu = 0; }
   cheer.you *= Math.exp(-dt * 0.7); cheer.cpu *= Math.exp(-dt * 0.7);
-  updateCrowd(time);
-  const boardTex = world.getBoardTex();
-  if (boardTex && !motionReduced) boardTex.offset.x = (time * 0.025) % 1;
 
   if (intro) {
     intro.t += dt;
@@ -1130,14 +1144,44 @@ function tick(dt) {
     if (intro.t > 3.6) $('tapToPlay').classList.add('show');
   }
   updateTowers(dt);
-  cam.update(dt, time, { intro, flying: match.phase === 'flight' && !!shot, ball: ball.pos, run: post && post.run, reduced: motionReduced });
-  // Keeper view: fade what blocks the view and highlight the ball.
+  cam.update(dt, time, { reduced: motionReduced });
+  // Keeper view: fade the goal that stands in front of the camera and highlight the ball.
+  // (The shots cut rather than glide, so the fade switches with them.)
   const keeperView = cam.goal === 'keeper' ? 1 : 0;
-  goalFade += (keeperView - goalFade) * Math.min(1, dt * 6);
-  world.setGoalFade(goalFade);
+  goalFade = keeperView;
   ballTracking.update(ball.pos, ball.moving && !replays.playing, 0.45 + 0.55 * keeperView, dt);
 }
-const quality = createQualityGovernor(Math.min(window.devicePixelRatio || 1, 2));
+
+// The moment a floodlight bangs on it flares, then settles.
+function updateTowers(dt) {
+  for (const t of towers) {
+    if (t.on > t.shown + 0.5) t.flare = 1;
+    t.shown = t.on;
+    t.flare *= Math.exp(-dt * 3);
+  }
+}
+
+// ------------------------------------------------------------------ drawing (view2d/renderer.js)
+const FIGURES = [
+  { body: keepers.cpu, role: 'keeper', fwd: 1, kneeOut: 0.05 },
+  { body: keepers.you, role: 'keeper', fwd: 1, kneeOut: 0.05 },
+  { body: taker, role: 'cpuTaker', fwd: -1, kneeOut: 0.015 },
+  { body: striker, role: 'youTaker', fwd: -1, kneeOut: 0.015 },
+];
+const frameState = {
+  time: 0, cheer, towers, figures: FIGURES, ball: { pos: ball.pos, roll: 0 }, net, goalFade: 0, markers: [hintZone, cornerHint, pulse.sprite, marker], shake: null,
+  over: (ctx, c) => { ballTracking.draw(ctx, c, ball.pos); effects.draw(ctx, c); if (debugView) debugView.draw(ctx, c); },
+};
+function render() {
+  view.setView(cam.view);
+  frameState.time = time;
+  frameState.ball.roll = ball.roll;
+  frameState.ball.visible = cam.goal !== 'pick';   // the menu tiles cover the spot: no ball peeking between them
+  frameState.goalFade = goalFade;
+  frameState.shake = cam.jolt;
+  view.render(frameState);
+}
+const quality = createQualityGovernor(pixelRatio);
 let pausedFrames = 0;
 function frame(now) {
   const raw = (now - last) / 1000, dt = Math.min(0.05, raw); last = now;
@@ -1146,10 +1190,10 @@ function frame(now) {
   // While paused the picture is still: draw a couple of frames, then rest.
   pausedFrames = paused ? pausedFrames + 1 : 0;
   if (pausedFrames < 3) {
-    renderer.render(scene, camera);
+    render();
     if (!devFrozen) {
       const ratio = quality.update(raw);
-      if (ratio) { renderer.setPixelRatio(ratio); resize(); }
+      if (ratio) { pixelRatio = ratio; resize(); }
     }
   }
   pointer.draw(dt);
@@ -1162,7 +1206,7 @@ if (import.meta.env.DEV) {
   // C shows the collision shapes; while it is on, the game freezes on the
   // first frame and keeper contact of each kick. Any key or click resumes
   // (and is swallowed, so it does not also shoot or dive).
-  import('./render/collision-debug.js').then(({ createCollisionDebug }) => { debugView = createCollisionDebug(scene); });
+  import('./view2d/collision-debug.js').then(({ createCollisionDebug }) => { debugView = createCollisionDebug(); });
   window.addEventListener('keydown', (e) => {
     if (!debugView) return;
     if (debugView.halted) { e.preventDefault(); e.stopImmediatePropagation(); debugView.resume(); return; }
@@ -1174,30 +1218,40 @@ if (import.meta.env.DEV) {
   window.__pn = {
     step(seconds, dt = 1 / 60) {
       for (let t = 0; t < seconds; t += dt) tick(dt);
-      renderer.render(scene, camera);
+      render();
     },
     seed(n) { Object.assign(rng, createRng(n)); },
     freeze(on = true) { devFrozen = on; },
     // Average milliseconds for tick + render over n frames (rendering forced each frame).
     bench(n = 120) {
-      const gl = renderer.getContext();
-      let tickMs = 0, renderMs = 0;
+      // Reading one pixel back at the end makes the canvas finish all its
+      // drawing, so the total is real; reading after every frame would stall
+      // the GPU each time and overstate the cost.
+      const ctx = canvas.getContext('2d');
+      let tickMs = 0;
+      const start = performance.now();
       for (let i = 0; i < n; i++) {
         const t0 = performance.now(); tick(1 / 60);
-        const t1 = performance.now(); renderer.render(scene, camera); gl.finish();
-        tickMs += t1 - t0; renderMs += performance.now() - t1;
+        tickMs += performance.now() - t0;
+        render();
       }
-      const info = renderer.info.render;
-      return { tick: +(tickMs / n).toFixed(2), render: +(renderMs / n).toFixed(2), calls: info.calls, triangles: info.triangles, dpr: renderer.getPixelRatio() };
+      ctx.getImageData(0, 0, 1, 1);
+      const total = performance.now() - start;
+      return { tick: +(tickMs / n).toFixed(2), render: +((total - tickMs) / n).toFixed(2), view: view.view, dpr: pixelRatio };
     },
     get paused() { return paused; },
     dive: (x, y) => diveTo(x, y),
+    intro: () => startIntro(),
+    // your kick without a swipe: aim point in the goal, flight time T (s), curl
+    kick: (aimX, aimY, T = 0.6, spin = 0) => shoot({ aimX, aimY, T, spin, power: 0.8 }),
     get plan() { return match.plan && { ...match.plan }; },
+    get hint() { return hintZone.t === null ? null : { x: hintZone.x, y: hintZone.y, r: hintZone.size / 2, t: hintZone.t }; },
     get training() { return trainingStage && { ...trainingStage }; },
     get homeX() { return keeper.homeX; },
     get debug() { return debugView && { on: debugView.on, halted: debugView.halted }; },
     toggleDebug: () => debugView && debugView.toggle(),
-    get camera() { return { pos: camera.position.toArray().map((v) => +v.toFixed(2)), fov: +camera.fov.toFixed(1), near: +camera.near.toFixed(2), aspect: +camera.aspect.toFixed(2), goal: cam.goal }; },
+    get camera() { const c = view.camera; return { pos: [c.eye.x, c.eye.y, c.eye.z].map((v) => +v.toFixed(2)), f: +c.f.toFixed(1), view: view.view, goal: cam.goal }; },
+    project: (x, y, z) => { const p = project(view.camera, x, y, z); return p && { x: p.x, y: p.y }; },
     get state() {
       return {
         phase: match.phase, turn: match.turn, mode: match.mode, you: [...match.you], cpu: [...match.cpu],

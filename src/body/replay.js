@@ -7,12 +7,13 @@ import { clamp, lerp } from '../core/math.js';
 const MAX_FRAMES = 900;
 
 // deps: { ball, poseKeeper, animateRunup, bulgeNet, cam, reduced: () => bool }
+// cam.replaySide is set to the side of the pitch the replay camera stands on.
 export function createReplays(deps) {
   const { ball, poseKeeper, animateRunup, bulgeNet, cam } = deps;
   let rec = null, play = null;
 
   const snapshot = (t, keeper, tk) => ({
-    t, b: [ball.pos.x, ball.pos.y, ball.pos.z], q: ball.mesh.quaternion.clone(),
+    t, b: [ball.pos.x, ball.pos.y, ball.pos.z], q: ball.roll,
     k: [keeper.x, keeper.y, keeper.tilt, keeper.arms], tk,
   });
 
@@ -59,8 +60,7 @@ export function createReplays(deps) {
       const a = fr[play.i], b = fr[Math.min(play.i + 1, fr.length - 1)];
       const u = b.t > a.t ? clamp((play.t - a.t) / (b.t - a.t), 0, 1) : 0;
       ball.pos.set(lerp(a.b[0], b.b[0], u), lerp(a.b[1], b.b[1], u), lerp(a.b[2], b.b[2], u));
-      ball.mesh.position.copy(ball.pos);
-      ball.mesh.quaternion.copy(a.q).slerp(b.q, u);
+      ball.roll = lerp(a.q, b.q, u);
       keeper.x = lerp(a.k[0], b.k[0], u); keeper.y = lerp(a.k[1], b.k[1], u);
       keeper.tilt = lerp(a.k[2], b.k[2], u); keeper.arms = lerp(a.k[3], b.k[3], u);
       poseKeeper(keeper);
@@ -69,13 +69,8 @@ export function createReplays(deps) {
         const e = rec.events[play.ev++];
         bulgeNet(e.at, e.dir, e.s);
       }
-      if (deps.reduced()) {
-        // a fixed side view instead of following the ball
-        cam.wantPos.set(play.side * 9, 1.6, 5.5); cam.wantLook.set(play.side * 0.8, 1, 4);
-      } else {
-        cam.wantPos.set(play.side * 8.2, 1.2, lerp(6.5, 3.2, clamp((SPOT_Z - ball.pos.z) / SPOT_Z, 0, 1)));
-        cam.wantLook.set(ball.pos.x * 0.8, Math.max(0.7, ball.pos.y), ball.pos.z);
-      }
+      // a fixed, low side view on the side the ball went (views.js)
+      cam.replaySide = play.side;
       return play.t >= play.end + 0.4;
     },
     clear() { rec = null; play = null; },

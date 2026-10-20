@@ -53,6 +53,19 @@ export function animateRunup(b, timer) {
   if (p >= 1) { b.hips[0].rotation.x = -0.3; b.hips[1].rotation.x = 1.2; }
 }
 
+// Your striker at the spot, seen from behind while you aim. t < 0: waiting
+// beside the ball. t >= 0: seconds since the strike; the body steps into
+// the ball and the kicking leg (hips[1], the right) follows through.
+export function poseStriker(b, t) {
+  const k = t < 0 ? 0 : Math.min(t / 0.22, 1), e = k * (2 - k);
+  b.root.position.set(lerp(-0.62, -0.42, e), 0, lerp(11.75, 11.45, e));
+  b.root.rotation.set(0, 0.3 * (1 - e), 0);
+  b.hips[0].rotation.set(t < 0 ? 0.1 : lerp(0.1, -0.3, e), 0, -0.05);
+  b.hips[1].rotation.set(t < 0 ? -0.15 : lerp(-0.4, 1.2, e), 0, 0.05);
+  b.shoulders[0].rotation.set(t < 0 ? 0 : -0.4 * e, 0, Math.PI - (t < 0 ? 0.12 : lerp(0.12, 0.9, e)));
+  b.shoulders[1].rotation.set(t < 0 ? 0 : 0.5 * e, 0, -Math.PI + (t < 0 ? 0.12 : lerp(0.12, 0.6, e)));
+}
+
 // Keeper state: feet position, body tilt (radians, + leans to +x), arm raise 0..1.
 // prev: the keeper this one replaces. When it is the same body, still on
 // screen (a new kick in training or practice), the keeper starts where it

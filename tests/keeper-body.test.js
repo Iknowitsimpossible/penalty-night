@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { makePerson, KITS, newKeeper, planDive, updateKeeper, DIVE_HOLD, DIVE_LAND, GETUP_PAUSE, GETUP, SHUFFLE } from '../src/render/people.js';
+import { makePerson, KITS, newKeeper, planDive, updateKeeper, DIVE_HOLD, DIVE_LAND, GETUP_PAUSE, GETUP, SHUFFLE } from '../src/body/people.js';
 import { RUNUP } from '../src/core/constants.js';
 
 // The lowest world-space vertex of every mesh in the body. Slower than

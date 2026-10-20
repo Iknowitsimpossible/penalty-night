@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createQualityGovernor, STEPS } from '../src/render/quality.js';
+import { createQualityGovernor, STEPS } from '../src/view2d/quality.js';
 
 const run = (g, fps, seconds) => {
   const changes = [];

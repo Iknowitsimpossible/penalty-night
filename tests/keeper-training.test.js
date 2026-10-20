@@ -3,7 +3,7 @@ import { STAGES, startStage, drillPlan, recordAttempt, SHOTS_PER_STAGE } from '.
 import { reconsider, executeShot } from '../src/ai/taker.js';
 import { diveReport } from '../src/feedback/explain.js';
 import { playKick } from '../src/sim/kick-sim.js';
-import { planDive } from '../src/render/people.js';
+import { planDive } from '../src/body/people.js';
 import { predictCrossing } from '../src/physics/ball.js';
 import { createRng } from '../src/core/random.js';
 import { RUNUP, COMMIT } from '../src/core/constants.js';

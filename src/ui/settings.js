@@ -4,12 +4,14 @@ export const DEFAULTS = {
   replays: 'highlights',   // 'always' | 'highlights' | 'off'
   celebrations: 'auto',    // 'auto' (short in practice and quick matches) | 'full' | 'short'
   motion: 'system',        // 'system' (follow the OS setting) | 'full' | 'reduced'
+  keeperHints: 'on',       // 'on' | 'off': the shot zone at the plant foot in matches
   sound: true,
 };
 export const OPTIONS = {
   replays: [['always', 'Always'], ['highlights', 'Highlights'], ['off', 'Off']],
   celebrations: [['auto', 'Auto'], ['full', 'Full'], ['short', 'Short']],
   motion: [['system', 'System'], ['full', 'Full'], ['reduced', 'Reduced']],
+  keeperHints: [['on', 'On'], ['off', 'Off']],
 };
 
 const KEY = 'penaltyNight.settings';

@@ -1,0 +1,529 @@
+// The stadium in the concept's style, on the Moon: a starry black sky with Earth, three-tier stands packed
+// with a hazy crowd, floodlights, ad boards, a striped floodlit pitch and
+// its lines. None of it moves, so it is painted once per view and screen
+// size into an offscreen canvas (bakeStadium) and copied every frame.
+// The goal and net are drawn live (drawGoal) because the net can bulge and
+// because in the keeper view they sit between the camera and the keeper.
+import { HALF, GOAL_H, POST_R, PX, BAR_Y, SPOT_Z, NET_D0, NET_D1 } from '../core/constants.js';
+import { project, projectPoly } from './projection.js';
+
+// ------------------------------------------------------------------ layout (metres)
+// Stand tiers as [distance behind the end line at the front, front height,
+// distance at the back, back height], as on the concept page.
+// (The top tier is a little flatter than the concept's, to open a strip of
+// sky above the stands for Earth in the shooting view.)
+const TIERS = [[6, 1.2, 13, 5.5], [13.5, 6.2, 20, 10.2], [20.5, 10.8, 28, 13.2]];
+export const FAR_Z = 30;          // the far end line: a compact floodlit ground
+const SIDE_X = 34;                // touchlines
+const END_W = 70;                 // half-width of the end stands
+const BOARD_D = 4;                // boards stand this far behind each end line
+
+// A small seeded generator so a re-bake (new view or size) paints the same crowd.
+function seeded(seed) {
+  let s = seed;
+  return () => (s = (s * 16807) % 2147483647) / 2147483647;
+}
+
+// cpuHex: the opponent's colour ('#rrggbb'); fans of each side lean to their colour.
+function crowdPalettes(cpuHex) {
+  const you = ['#f2c230', '#d9a826', '#f2c230', '#e9b928'];
+  const cpu = [cpuHex, cpuHex, mix(cpuHex, '#000000', 0.25), mix(cpuHex, '#ffffff', 0.25)];
+  const neutral = ['#e9edf5', '#2b3550', '#3b4766', '#1d2438', '#c0573d'];
+  return { you, cpu, neutral };
+}
+export function mix(a, b, t) {
+  const p = parseInt(a.slice(1), 16), q = parseInt(b.slice(1), 16);
+  const c = (s) => Math.round(((p >> s) & 255) + ((((q >> s) & 255) - ((p >> s) & 255)) * t));
+  return '#' + ((c(16) << 16) | (c(8) << 8) | c(0)).toString(16).padStart(6, '0');
+}
+
+// Which parts of the ground a view can see. The keeper view stands inside
+// the stand behind the goal, so that end (and its boards) are left out.
+const showsNearEnd = (view) => view !== 'keeper';
+
+// Each stand: `at(u, d, y)` places a point u along it (-1..1), d metres
+// back from its front line, at height y. End stands lean toward a side's
+// fans by half; the side stands are mixed.
+function standsFor(view) {
+  const endStand = (sign, lineZ) => ({
+    at: (u, d, y) => [u * END_W, y, lineZ + sign * d],
+    len: END_W * 2, kind: 'end', lean: (u) => (u * sign < 0 ? 'you' : 'cpu'),
+    centre: [0, 8, lineZ + sign * 16],
+  });
+  const sideStand = (sign) => ({
+    at: (u, d, y) => [sign * (SIDE_X + d), y, (FAR_Z - 6) / 2 + u * (FAR_Z + 6) / 2],
+    len: FAR_Z + 6, kind: 'side', lean: () => 'mix',
+    centre: [sign * (SIDE_X + 16), 8, FAR_Z / 2],
+  });
+  const list = [endStand(1, FAR_Z), sideStand(-1), sideStand(1)];
+  if (showsNearEnd(view)) list.unshift(endStand(-1, 0));
+  return list;
+}
+
+// A random spot in the crowd (world metres), for the phone flashes.
+export function crowdPoint(random) {
+  const st = standsFor('shoot')[(random() * 4) | 0];
+  const [d0, y0, d1, y1] = TIERS[(random() * 3) | 0], t = random();
+  return st.at(random() * 2 - 1, d0 + (d1 - d0) * t, y0 + (y1 - y0) * t + 0.7);
+}
+
+// The floodlight heads, in the same order as the game's towers array.
+export const TOWERS = [[-27, 14, -30], [27, 14, -30], [-27, 17, FAR_Z + 32], [27, 17, FAR_Z + 32]];
+
+// How the end-stand crowd is cut up so it can cheer: each tier's rows in
+// three bands, each band in this many pieces along the stand, every piece
+// bobbing on its own beat.
+const BANDS = 3, PIECES = 8;
+
+// ------------------------------------------------------------------ the sky
+// The stadium stands on the Moon: a black sky full of stars with a faint
+// Milky Way, grey cratered ground beyond the stands, and Earth hanging
+// over the far side. Painted first, so the stands cover whatever is low.
+function paintMoonSky(c, cam, w, h, stands) {
+  const rnd = seeded(31);
+  // no air, so no blue: near-black, warmed only by the floodlights low down
+  const sky = c.createLinearGradient(0, 0, 0, h);
+  sky.addColorStop(0, '#000003'); sky.addColorStop(0.5, '#03050d'); sky.addColorStop(1, '#0c1226');
+  c.fillStyle = sky; c.fillRect(0, 0, w, h);
+
+  // the Milky Way: a soft diagonal band of glow packed with fine stars
+  const bx0 = -0.1 * w, by0 = 0.42 * h, bx1 = 1.1 * w, by1 = -0.05 * h;
+  const bl = Math.hypot(bx1 - bx0, by1 - by0), ang = Math.atan2(by1 - by0, bx1 - bx0);
+  c.save();
+  c.translate((bx0 + bx1) / 2, (by0 + by1) / 2); c.rotate(ang); c.scale(1, 0.16);
+  const g = c.createRadialGradient(0, 0, 0, 0, 0, bl / 2);
+  g.addColorStop(0, 'rgba(170,180,255,0.16)'); g.addColorStop(0.5, 'rgba(120,130,210,0.07)'); g.addColorStop(1, 'rgba(120,130,210,0)');
+  c.fillStyle = g; c.fillRect(-bl / 2, -bl / 2, bl, bl);
+  c.restore();
+  const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+  c.fillStyle = '#dfe6ff';
+  for (let i = 0; i < 700; i++) {
+    const t = rnd(), off = gauss() * 0.06 * bl;
+    const x = bx0 + (bx1 - bx0) * t - Math.sin(ang) * off, y = by0 + (by1 - by0) * t + Math.cos(ang) * off;
+    c.globalAlpha = 0.15 + rnd() * 0.45;
+    c.fillRect(x, y, 0.9, 0.9);
+  }
+  // the brighter stars, a few tinted and a few with a glint
+  const tints = ['#ffffff', '#ffffff', '#ffffff', '#cfe0ff', '#ffe9c4'];
+  for (let i = 0; i < 260; i++) {
+    const x = rnd() * w, y = rnd() * h * 0.7, big = rnd() < 0.06, a = 0.25 + rnd() * 0.65;
+    c.globalAlpha = a; c.fillStyle = tints[(rnd() * tints.length) | 0];
+    const r = big ? 1.3 : 0.4 + rnd() * 0.6;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    if (big) { c.globalAlpha = a * 0.5; c.fillRect(x - 4, y - 0.3, 8, 0.6); c.fillRect(x - 0.3, y - 4, 0.6, 8); }
+  }
+  c.globalAlpha = 1;
+
+  // the lunar ground out to the horizon, with craters near it
+  const far = project(cam, cam.eye.x + cam.fwd[0] * 4000, 0, cam.eye.z + cam.fwd[2] * 4000);
+  const hy = far ? far.y : h * 0.5;
+  if (hy < h) {
+    const ground = c.createLinearGradient(0, hy, 0, h);
+    ground.addColorStop(0, '#3a3d47'); ground.addColorStop(0.08, '#24262e'); ground.addColorStop(1, '#14151a');
+    c.fillStyle = ground; c.fillRect(0, hy, w, h - hy);
+    for (let i = 0; i < 40; i++) {
+      const x = rnd() * w, d = rnd(), y = hy + 2 + d * d * Math.min(h - hy, 120), rx = 4 + d * 40 + rnd() * 10;
+      c.globalAlpha = 0.5;
+      c.fillStyle = '#0d0e12'; c.beginPath(); c.ellipse(x, y, rx, rx * 0.18, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#4a4d58'; c.beginPath(); c.ellipse(x + rx * 0.1, y + rx * 0.05, rx * 0.95, rx * 0.15, 0, 0, Math.PI); c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+
+  // Earth, over the far side: sitting just above the stands, or rising
+  // from behind them when the stands reach high on the screen. A third of
+  // the way across, clear of the scoreboard, the floodlights and the
+  // settings button.
+  const r = Math.max(16, Math.min(42, Math.min(w, h) * 0.05));
+  // How high the stands reach at a screen column: paint every tier (side
+  // stands too) into a small mask and look for the first covered pixel.
+  // (Working it out from the top edges alone misses stands that run past
+  // the camera, whose nearest part towers over everything.)
+  const K = 4, mw = Math.max(1, Math.ceil(w / K)), mh = Math.max(1, Math.ceil(h / K));
+  const mask = document.createElement('canvas');
+  mask.width = mw; mask.height = mh;
+  const m = mask.getContext('2d');
+  m.setTransform(1 / K, 0, 0, 1 / K, 0, 0);
+  m.fillStyle = '#fff';
+  for (const st of stands) {
+    for (const [d0, y0, d1, y1] of TIERS) {
+      const poly = projectPoly(cam, [st.at(-1, d0 - 0.3, y0 - 0.6), st.at(1, d0 - 0.3, y0 - 0.6), st.at(1, d1, y1), st.at(-1, d1, y1)]);
+      if (poly.length < 3) continue;
+      m.beginPath(); poly.forEach(([x, y], i) => (i ? m.lineTo(x, y) : m.moveTo(x, y))); m.closePath(); m.fill();
+    }
+  }
+  const standTop = (x) => {
+    let top = hy;
+    for (let cx = Math.floor((x - r) / K); cx <= Math.ceil((x + r) / K); cx++) {
+      if (cx < 0 || cx >= mw) continue;
+      const col = m.getImageData(cx, 0, 1, mh).data;
+      for (let y = 0; y < mh; y++) if (col[y * 4 + 3] > 0) { top = Math.min(top, y * K); break; }
+    }
+    return top;
+  };
+  // the left third if it has room for Earth (it does in the match views),
+  // otherwise the right third (a side-on replay looking along a tall stand)
+  let ex = w * 0.29, top = standTop(ex);
+  if (top < r * 2.2) {
+    const alt = standTop(w * 0.7);
+    if (alt > top) { ex = w * 0.7; top = alt; }
+  }
+  drawEarth(c, ex, Math.max(top - r * 0.55, r * 0.9), r);
+}
+
+// A small Earth: blue oceans, green and tan land, swirls of cloud, an
+// ice cap, the night side in shadow and a thin glow of atmosphere.
+function drawEarth(c, x, y, r) {
+  const rnd = seeded(23);
+  const glow = c.createRadialGradient(x, y, r * 0.9, x, y, r * 1.7);
+  glow.addColorStop(0, 'rgba(120,180,255,0.35)'); glow.addColorStop(1, 'rgba(120,180,255,0)');
+  c.fillStyle = glow; c.fillRect(x - r * 2, y - r * 2, r * 4, r * 4);
+  c.save();
+  c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.clip();
+  const sea = c.createRadialGradient(x + r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+  sea.addColorStop(0, '#5aaeff'); sea.addColorStop(0.55, '#1f63c9'); sea.addColorStop(1, '#0a2a66');
+  c.fillStyle = sea; c.fillRect(x - r, y - r, r * 2, r * 2);
+  // land: a few lumpy blobs
+  for (const [ux, uy, s, col] of [[-0.35, -0.2, 0.42, '#4e9a50'], [0.25, 0.15, 0.36, '#b89a63'], [0.45, -0.45, 0.22, '#5aa05a'], [-0.1, 0.55, 0.28, '#4e9a50']]) {
+    c.beginPath();
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2, k = s * r * (0.7 + rnd() * 0.5);
+      const px = x + ux * r + Math.cos(a) * k, py = y + uy * r + Math.sin(a) * k * 0.8;
+      i ? c.lineTo(px, py) : c.moveTo(px, py);
+    }
+    c.closePath(); c.fillStyle = col; c.fill();
+  }
+  // clouds and the ice cap
+  c.strokeStyle = 'rgba(255,255,255,0.6)'; c.lineCap = 'round';
+  for (let i = 0; i < 7; i++) {
+    c.lineWidth = r * (0.05 + rnd() * 0.06);
+    const cx = x + (rnd() - 0.5) * r * 1.6, cy = y + (rnd() - 0.5) * r * 1.6, rr = r * (0.2 + rnd() * 0.35), a0 = rnd() * Math.PI * 2;
+    c.beginPath(); c.arc(cx, cy, rr, a0, a0 + 1 + rnd() * 1.5); c.stroke();
+  }
+  c.fillStyle = 'rgba(255,255,255,0.85)';
+  c.beginPath(); c.ellipse(x, y - r * 0.95, r * 0.5, r * 0.18, 0, 0, Math.PI * 2); c.fill();
+  // the night side: the Sun is off to the upper right
+  const night = c.createLinearGradient(x + r * 0.7, y - r * 0.5, x - r * 0.9, y + r * 0.6);
+  night.addColorStop(0, 'rgba(0,4,16,0)'); night.addColorStop(0.42, 'rgba(0,4,16,0)');
+  night.addColorStop(0.62, 'rgba(0,4,16,0.82)'); night.addColorStop(1, 'rgba(0,2,8,0.95)');
+  c.fillStyle = night; c.fillRect(x - r, y - r, r * 2, r * 2);
+  c.restore();
+  // a thin bright rim of atmosphere on the lit side
+  c.strokeStyle = 'rgba(170,215,255,0.7)'; c.lineWidth = Math.max(1, r * 0.05);
+  c.beginPath(); c.arc(x, y, r, -Math.PI * 0.95, Math.PI * 0.2); c.stroke();
+}
+
+// ------------------------------------------------------------------ bake
+// cam: from views.js. w, h: CSS pixels. dpr: device pixel ratio.
+// opts: { view, cpuColor: '#rrggbb' }
+// Returns layers the renderer stacks every frame:
+//   still: everything, for the usual frame
+//   bare:  sky, stands and haze without the end stands' crowd, which is in
+//          `tiles` instead (drawn with an offset while that end cheers)
+//   front: pitch, side stands, boards and lines (transparent elsewhere),
+//          drawn over bare and the tiles
+export function bakeStadium(cam, w, h, dpr, opts) {
+  const layer = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w * dpr)); canvas.height = Math.max(1, Math.round(h * dpr));
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { canvas, ctx };
+  };
+  const P = (x, y, z) => project(cam, x, y, z);
+  let c;   // the layer being painted
+  const polyPath = (pts) => {
+    const s = projectPoly(cam, pts);
+    if (s.length < 3) return false;
+    c.beginPath();
+    s.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+    c.closePath();
+    return true;
+  };
+  const fillPoly = (pts, style, alpha = 1) => {
+    if (!polyPath(pts)) return;
+    c.globalAlpha = alpha; c.fillStyle = style; c.fill(); c.globalAlpha = 1;
+  };
+
+  const pal = crowdPalettes(opts.cpuColor || '#2fc6b4');
+  const stands = standsFor(opts.view);
+  // far stands first, so nearer ones paint over them
+  const dist = (p) => Math.hypot(p[0] - cam.eye.x, p[2] - cam.eye.z);
+  stands.sort((a, b) => dist(b.centre) - dist(a.centre));
+  const ends = stands.filter((st) => st.kind === 'end'), sides = stands.filter((st) => st.kind === 'side');
+
+  // One stand: tier faces, fascias and the crowd: rows of small round heads,
+  // dimmer toward the back. heads(head) receives each head instead of it
+  // being painted, when the crowd goes into tiles.
+  const drawStand = (st, rnd, heads) => {
+    TIERS.forEach(([d0, y0, d1, y1], tier) => {
+      const A = (u, d, y) => st.at(u, d, y);
+      fillPoly([A(-1, d0, y0), A(1, d0, y0), A(1, d1, y1), A(-1, d1, y1)], '#141b2e');
+      fillPoly([A(-1, d0 - 0.3, y0 - 0.6), A(1, d0 - 0.3, y0 - 0.6), A(1, d0, y0), A(-1, d0, y0)], '#232c47');
+      const rows = 18, step = 0.42;
+      for (let r = 0; r < rows; r++) {
+        const t = (r + 0.5) / rows, d = d0 + (d1 - d0) * t, y = y0 + (y1 - y0) * t;
+        const n = Math.floor(st.len / step);
+        const alpha = 0.4 + 0.35 * (1 - t);
+        for (let i = 0; i < n; i++) {
+          const u = -1 + (i + rnd() * 0.7) * 2 / n;
+          const skip = rnd() < 0.08, colPick = rnd(), lean = rnd(), sizeK = rnd(), up = rnd();
+          if (skip) continue;
+          const [x, , z] = st.at(u, d, y);
+          const p = P(x, y + 0.25, z);
+          if (!p || p.x < -10 || p.x > w + 10 || p.y < -10 || p.y > h + 10) continue;
+          const rr = p.s * 0.14 * (0.8 + sizeK * 0.35);
+          if (rr < 0.35) continue;
+          const side = st.lean(u);
+          const group = side === 'mix' ? (lean < 0.3 ? pal.you : lean < 0.6 ? pal.cpu : pal.neutral)
+            : lean < 0.62 ? pal[side] : lean < 0.8 ? pal[side === 'you' ? 'cpu' : 'you'] : pal.neutral;
+          const head = { x: p.x, y: p.y - (up < 0.12 ? rr * 1.4 : 0), r: rr, s: p.s, alpha, color: group[Math.floor(colPick * group.length)],
+            key: `${side}|${st.centre[2]}|${tier}|${Math.floor(r / (rows / BANDS))}|${Math.min(PIECES - 1, Math.floor((u + 1) / 2 * PIECES))}`, side };
+          if (heads) { heads(head); continue; }
+          c.globalAlpha = alpha; c.fillStyle = head.color;
+          c.beginPath(); c.arc(head.x, head.y, rr, 0, Math.PI * 2); c.fill();
+        }
+      }
+      c.globalAlpha = 1;
+    });
+  };
+
+  // ---------------- back layers: sky, end stands, haze (twice: with and without the crowd)
+  const tileHeads = new Map();
+  const paintBack = (L, collect) => {
+    c = L.ctx;
+    const rnd = seeded(7);
+    paintMoonSky(c, cam, w, h, stands);
+    for (const st of ends) {
+      drawStand(st, rnd, collect ? (hd) => {
+        let list = tileHeads.get(hd.key);
+        if (!list) tileHeads.set(hd.key, (list = []));
+        list.push(hd);
+      } : null);
+    }
+    // camera flashes frozen in the stands, then the night haze over it all
+    c.fillStyle = '#ffffff';
+    for (let i = 0; i < 26; i++) {
+      c.globalAlpha = 0.5 + rnd() * 0.5;
+      c.beginPath(); c.arc(rnd() * w, h * (0.05 + rnd() * 0.3), 1 + rnd() * 1.8, 0, Math.PI * 2); c.fill();
+    }
+    c.globalAlpha = 0.32; c.fillStyle = '#0a1020'; c.fillRect(0, 0, w, h); c.globalAlpha = 1;
+  };
+  const back = layer(), bare = layer();
+  paintBack(back, false);
+  paintBack(bare, true);
+
+  // ---------------- crowd tiles: each piece of crowd on its own small canvas
+  const tiles = [];
+  const tileRnd = seeded(11);
+  for (const heads of tileHeads.values()) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, s = 0;
+    for (const hd of heads) {
+      x0 = Math.min(x0, hd.x - hd.r); x1 = Math.max(x1, hd.x + hd.r);
+      y0 = Math.min(y0, hd.y - hd.r); y1 = Math.max(y1, hd.y + hd.r);
+      s += hd.s;
+    }
+    x0 = Math.floor(x0 - 1); y0 = Math.floor(y0 - 1);
+    const tw = Math.ceil(x1 + 1 - x0), th = Math.ceil(y1 + 1 - y0);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(tw * dpr)); canvas.height = Math.max(1, Math.ceil(th * dpr));
+    const t = canvas.getContext('2d');
+    t.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr);
+    for (const hd of heads) {
+      t.globalAlpha = hd.alpha; t.fillStyle = hd.color;
+      t.beginPath(); t.arc(hd.x, hd.y, hd.r, 0, Math.PI * 2); t.fill();
+    }
+    // the same haze as the rest of the stand
+    t.globalAlpha = 0.32; t.globalCompositeOperation = 'source-atop'; t.fillStyle = '#0a1020'; t.fillRect(x0, y0, tw, th);
+    tiles.push({ canvas, x: x0, y: y0, w: tw, h: th, s: s / heads.length, side: heads[0].side, phase: tileRnd() * Math.PI * 2 });
+  }
+
+  // ---------------- front layer: pitch with mowing stripes across, side stands, boards, lines
+  const front = layer();
+  c = front.ctx;
+  // (the keeper view stands behind the goal, in the stand's place: grass right up to the lens)
+  const z0 = showsNearEnd(opts.view) ? -6 : Math.min(-6, cam.eye.z), z1 = FAR_Z + 6;
+  const top = P(0, 0, z1), bottom = h;
+  const grass = c.createLinearGradient(0, top ? top.y : 0, 0, bottom);
+  grass.addColorStop(0, '#2b7a35'); grass.addColorStop(1, '#1c5a26');
+  fillPoly([[-SIDE_X - 6, 0, z0], [SIDE_X + 6, 0, z0], [SIDE_X + 6, 0, z1], [-SIDE_X - 6, 0, z1]], grass);
+  for (let z = z0, i = 0; z < z1; z += 2.2, i++) {
+    if (i % 2) continue;
+    fillPoly([[-SIDE_X - 6, 0, z], [SIDE_X + 6, 0, z], [SIDE_X + 6, 0, Math.min(z + 2.2, z1)], [-SIDE_X - 6, 0, Math.min(z + 2.2, z1)]], '#3b9a45', 0.28);
+  }
+  // the floodlights' pool of light around the goal mouth and the spot
+  const pool = P(0, 0, 6);
+  if (pool) {
+    const r = Math.max(w, h) * 0.75;
+    const g = c.createRadialGradient(pool.x, pool.y, 0, pool.x, pool.y, r);
+    g.addColorStop(0, 'rgba(255,243,196,0.2)'); g.addColorStop(1, 'rgba(255,243,196,0)');
+    c.save(); c.translate(pool.x, pool.y); c.scale(1, 0.4); c.translate(-pool.x, -pool.y);
+    c.fillStyle = g; c.fillRect(pool.x - r, pool.y - r, r * 2, r * 2);
+    c.restore();
+  }
+  const sideRnd = seeded(5);
+  sides.forEach((st) => drawStand(st, sideRnd, null));
+  c.globalAlpha = 1;
+
+  // ---------------- ad boards: alternating gold and teal panels
+  const boardFont = (px) => `900 ${px}px ${getComputedStyle(document.documentElement).getPropertyValue('--display') || "'Arial Black', sans-serif"}`;
+  const boardRun = (from, to) => {
+    // a run of panels from `from` to `to` (world [x, z]), 1 m tall
+    const len = Math.hypot(to[0] - from[0], to[1] - from[1]), n = Math.max(1, Math.round(len / 10));
+    const at = (t, y) => [from[0] + (to[0] - from[0]) * t, y, from[1] + (to[1] - from[1]) * t];
+    fillPoly([at(0, 0), at(1, 0), at(1, 1), at(0, 1)], '#0d1a36');
+    for (let i = 0; i < n; i++) {
+      const a = (i + 0.04) / n, b = (i + 0.96) / n, gold = i % 2 === 0;
+      fillPoly([at(a, 0.15), at(b, 0.15), at(b, 0.85), at(a, 0.85)], gold ? '#f2c230' : '#1fb59f', 0.9);
+      const m = P(...at((a + b) / 2, 0.5));
+      const pl = P(...at(a, 0.5)), pr = P(...at(b, 0.5));
+      if (!m || !pl || !pr || m.s < 3) continue;
+      const width = Math.abs(pr.x - pl.x);
+      if (width < 30) continue;
+      c.save();
+      c.fillStyle = '#0d1a36'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.font = boardFont(Math.min(m.s * 0.4, width / 9));
+      c.fillText(gold ? 'PENALTY NIGHT' : 'NIGHT CUP', m.x, m.y + m.s * 0.03, width * 0.92);
+      c.restore();
+    }
+  };
+  if (showsNearEnd(opts.view)) boardRun([-60, -BOARD_D], [60, -BOARD_D]);
+  boardRun([60, FAR_Z + BOARD_D], [-60, FAR_Z + BOARD_D]);
+  for (const s of [-1, 1]) boardRun([s * (SIDE_X + BOARD_D), -BOARD_D], [s * (SIDE_X + BOARD_D), FAR_Z + BOARD_D]);
+
+  // ---------------- pitch lines: real widths, drawn as flat strips on the grass
+  const LINE = 0.12;
+  c.fillStyle = 'rgba(242,246,238,0.85)';
+  const strip = (a, b) => {
+    const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz) || 1;
+    const nx = -dz / len * LINE / 2, nz = dx / len * LINE / 2;
+    const pieces = Math.max(1, Math.ceil(len / 3));
+    for (let i = 0; i < pieces; i++) {
+      const t0 = i / pieces, t1 = (i + 1) / pieces;
+      const p0 = [a[0] + dx * t0, a[1] + dz * t0], p1 = [a[0] + dx * t1, a[1] + dz * t1];
+      if (polyPath([[p0[0] + nx, 0.003, p0[1] + nz], [p1[0] + nx, 0.003, p1[1] + nz], [p1[0] - nx, 0.003, p1[1] - nz], [p0[0] - nx, 0.003, p0[1] - nz]])) c.fill();
+    }
+  };
+  const line = (pts) => { for (let i = 1; i < pts.length; i++) strip(pts[i - 1], pts[i]); };
+  for (const end of [0, FAR_Z]) {
+    const s = end ? -1 : 1;   // into the pitch
+    line([[-SIDE_X, end], [SIDE_X, end]]);
+    line([[-9.16, end], [-9.16, end + s * 5.5], [9.16, end + s * 5.5], [9.16, end]]);
+    line([[-20.16, end], [-20.16, end + s * 16.5], [20.16, end + s * 16.5], [20.16, end]]);
+  }
+  line([[-SIDE_X, 0], [-SIDE_X, FAR_Z]]); line([[SIDE_X, 0], [SIDE_X, FAR_Z]]);
+  // the "D": the part of a 9.15 m circle around the spot outside the box
+  const a = Math.acos(5.5 / 9.15), arc = [];
+  for (let i = 0; i <= 16; i++) { const t = -a + (2 * a * i) / 16; arc.push([Math.sin(t) * 9.15, SPOT_Z + Math.cos(t) * 9.15]); }
+  line(arc);
+  // the penalty spot
+  const spot = [];
+  for (let i = 0; i < 12; i++) { const t = (i / 12) * Math.PI * 2; spot.push([Math.cos(t) * 0.12, 0.004, SPOT_Z + Math.sin(t) * 0.12]); }
+  if (polyPath(spot)) { c.fillStyle = 'rgba(242,246,238,0.92)'; c.fill(); }
+
+  // the usual frame (nobody cheering) needs just one copy: back and front together
+  const still = layer();
+  still.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  still.ctx.drawImage(back.canvas, 0, 0); still.ctx.drawImage(front.canvas, 0, 0);
+  return { still: still.canvas, bare: bare.canvas, front: front.canvas, tiles };
+}
+
+// The floodlight heads, drawn every frame so each can switch on by itself
+// in the title sequence. towers: [{ shown: 0..1, flare: 0..1 }] in TOWERS order.
+export function drawTowers(ctx, cam, towers) {
+  TOWERS.forEach(([x, y, z], i) => {
+    const t = towers[i];
+    const p = project(cam, x, y, z);
+    if (!p || !t) return;
+    const on = t.shown;
+    const hw = 2.2 * p.s, hh = 0.8 * p.s;
+    ctx.fillStyle = on > 0.5 ? '#d9d9d0' : '#3a4052';
+    ctx.fillRect(p.x - hw, p.y - hh, hw * 2, hh * 2);
+    ctx.fillStyle = on > 0.5 ? '#fffdf0' : '#59607a';
+    ctx.beginPath();
+    for (let a = 0; a < 4; a++) for (let b = 0; b < 2; b++) {
+      const cx = p.x - hw * 0.75 + a * hw * 0.5, cy = p.y - hh * 0.45 + b * hh * 0.9;
+      ctx.moveTo(cx + hh * 0.36, cy); ctx.arc(cx, cy, hh * 0.36, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    if (on > 0.02) {
+      const r = (9.6 + t.flare * 14) * p.s;
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      g.addColorStop(0, `rgba(255,251,232,${0.55 * on})`); g.addColorStop(0.15, `rgba(255,242,192,${0.47 * on})`); g.addColorStop(1, 'rgba(255,242,192,0)');
+      ctx.fillStyle = g; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+    }
+  });
+}
+
+// ------------------------------------------------------------------ the goal
+// Two layers, so the renderer can sort them against the keeper and the
+// ball: the net (dark backing, mesh, support bars) a metre and a half
+// behind the line, and the white frame on it. The net's knots come from
+// net.js and move when it bulges. alpha: 1, or less in the keeper view,
+// where the goal stands between the camera and the keeper.
+export function drawNet(ctx, cam, net, alpha = 1) {
+  ctx.save();
+  ctx.lineCap = 'butt';
+  // the dark backing panel behind the mesh, so the net reads against the crowd
+  const back = projectPoly(cam, [[-HALF, 0, -NET_D0], [HALF, 0, -NET_D0], [HALF, GOAL_H, -NET_D1], [-HALF, GOAL_H, -NET_D1]]);
+  if (back.length > 2) {
+    ctx.globalAlpha = 0.45 * alpha;
+    ctx.fillStyle = '#0d1428';
+    ctx.beginPath(); back.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); ctx.fill();
+  }
+  // the mesh: every grid segment in one path
+  const scr = net.screen;
+  for (let i = 0; i < net.cur.length; i++) {
+    const p = net.cur[i], q = project(cam, p[0], p[1], p[2]);
+    scr[i * 2] = q ? q.x : NaN; scr[i * 2 + 1] = q ? q.y : NaN;
+  }
+  ctx.beginPath();
+  const segs = net.segs;
+  for (let i = 0; i < segs.length; i += 2) {
+    const a = segs[i] * 2, b = segs[i + 1] * 2;
+    if (Number.isNaN(scr[a]) || Number.isNaN(scr[b])) continue;
+    ctx.moveTo(scr[a], scr[a + 1]); ctx.lineTo(scr[b], scr[b + 1]);
+  }
+  const mid = project(cam, 0, 1, -1);
+  ctx.globalAlpha = 0.42 * alpha;
+  ctx.strokeStyle = '#e8eef8';
+  ctx.lineWidth = Math.max(0.6, Math.min(1.4, (mid ? mid.s : 60) * 0.012));
+  ctx.stroke();
+
+  // support bars at the back
+  const bar = (a, b, r, color) => {
+    const pa = project(cam, ...a), pb = project(cam, ...b);
+    if (!pa || !pb) return;
+    ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, r * 2 * (pa.s + pb.s) / 2);
+    ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+  };
+  ctx.globalAlpha = 0.9 * alpha;
+  for (const s of [-1, 1]) {
+    bar([s * PX, BAR_Y, 0], [s * PX, GOAL_H, -NET_D1], 0.025, '#c9ced6');
+    bar([s * PX, GOAL_H, -NET_D1], [s * PX, 0.02, -NET_D0], 0.025, '#c9ced6');
+  }
+  bar([-PX, 0.02, -NET_D0], [PX, 0.02, -NET_D0], 0.025, '#c9ced6');
+  bar([-PX, GOAL_H, -NET_D1], [PX, GOAL_H, -NET_D1], 0.025, '#c9ced6');
+  ctx.restore();
+}
+
+// The frame: posts and bar as solid white quads of their real width, plus a highlight.
+export function drawFrame(ctx, cam, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const beam = (a, b, color, r = POST_R) => {
+    const pa = project(cam, ...a), pb = project(cam, ...b);
+    if (!pa || !pb) return;
+    const dx = pb.x - pa.x, dy = pb.y - pa.y, len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len, ra = r * pa.s, rb = r * pb.s;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(pa.x + nx * ra, pa.y + ny * ra); ctx.lineTo(pb.x + nx * rb, pb.y + ny * rb);
+    ctx.lineTo(pb.x - nx * rb, pb.y - ny * rb); ctx.lineTo(pa.x - nx * ra, pa.y - ny * ra);
+    ctx.closePath(); ctx.fill();
+  };
+  for (const s of [-1, 1]) beam([s * PX, 0, 0], [s * PX, BAR_Y + POST_R, 0], '#f6f7f9');
+  beam([-PX - POST_R, BAR_Y, 0], [PX + POST_R, BAR_Y, 0], '#f6f7f9');
+  beam([-PX - POST_R, BAR_Y + POST_R * 0.5, 0], [PX + POST_R, BAR_Y + POST_R * 0.5, 0], '#ffffff', POST_R * 0.35);
+  ctx.restore();
+}

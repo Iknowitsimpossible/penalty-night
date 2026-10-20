@@ -1,6 +1,8 @@
 # Penalty Night
 
-A floodlit penalty shootout in the browser, built with three.js and Vite.
+A floodlit penalty shootout on the Moon (Earth hangs over the far stand), drawn on a 2D canvas and built
+with Vite. The look follows the art direction in
+[`docs/art-direction/concept-v1.html`](docs/art-direction/concept-v1.html).
 Take penalties with a swipe (or the keyboard), then dive to save theirs.
 Quick matches, an eight-team cup, a practice mode that teaches both roles,
 and a five-stage keeper training mode.
@@ -32,8 +34,9 @@ gold at the plant foot. Diving in the red lets them switch sides.
 
 ## How the code is organised
 
-Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
-`input/pointer.js` do not touch the screen, so they are unit tested.
+Each folder is one system. Files outside `view2d/`, `ui/`, `audio/` and
+`input/pointer.js` do not touch the screen, so they are unit tested (and so
+are the camera maths in `view2d/projection.js` and `view2d/views.js`).
 
 | Folder | What it does |
 |---|---|
@@ -46,7 +49,8 @@ Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
 | `practice/` | The practice lessons and keeper training drills, and what counts as a valid attempt |
 | `feedback/` | The plain-words explanation and advice after each kick |
 | `sim/` | A headless kick (real physics, keeper body, collisions) for balance reports and acceptance tests |
-| `render/` | Stadium, people, ball, effects, camera, replays, adaptive resolution |
+| `body/` | The players' jointed bodies, the run-ups and the keeper's stance, dives and celebration, the keeper's collision spheres, and replay recording |
+| `view2d/` | Everything you see: a pinhole camera and its fixed shots, the stadium (painted once per shot), the concept-style players, ball, net, effects, adaptive resolution, and the dev-only collision view |
 | `ui/` | HUD, result card, cup hub, settings |
 | `audio/` | Synthesized sound (nothing to download) |
 | `game.js` | The match flow that connects all of the above |
@@ -63,8 +67,31 @@ Each folder is one system. Files outside `render/`, `ui/`, `audio/` and
   after changing `src/ai/levels.js` or the keeper's dive.
 - In development, `window.__pn` steps the game at a fixed rate for exact,
   repeatable browser checks: `__pn.freeze()`, `__pn.seed(1)`,
-  `__pn.step(1.5)`, `__pn.state`, `__pn.bench()`. It is not in production builds.
+  `__pn.step(1.5)`, `__pn.state`, `__pn.kick(x, y)` (a kick without a swipe),
+  `__pn.project(x, y, z)` (where a world point lands on screen),
+  `__pn.intro()` and `__pn.bench()`. It is not in production builds.
 - In development, press **C** for the collision debug view: the keeper's
-  collision spheres, the posts and bar, and the ball as wireframes. While
+  collision spheres, the posts and bar, and the ball as outlines. While
   it is on, the game freezes the first time a kick touches the frame or the
   keeper and marks the contact (red); any key or click carries on.
+
+## How the 2D drawing works
+
+- **One camera, fixed shots.** `view2d/projection.js` is a pinhole camera:
+  a world point in metres becomes a screen point. `view2d/views.js` sets up
+  the shots (behind the taker when you shoot, behind the goal when you keep,
+  a low side view for replays, and the menu). The game cuts between them.
+  A tap on the goal runs the projection backwards to find where you aimed.
+- **The stadium is painted once.** Stands, crowd, boards, pitch and lines
+  are drawn into offscreen canvases per shot and screen size, then copied
+  every frame. While an end celebrates, its crowd is drawn as small pieces
+  that bob up and down.
+- **What you see is what saves.** The players are still the jointed
+  bodies in `body/people.js`, kept in three.js objects for their maths (no
+  WebGL). `view2d/figures.js` projects their hips, shoulders, gloves, feet
+  and head and draws the concept's figure through them, so the gloves on
+  screen are the gloves the collision spheres come from.
+- **Speed.** `__pn.bench()` reports milliseconds per frame. On an M2 with
+  the GPU (Chrome, pixel ratio 2), drawing a frame takes about 1.2 to 2.9 ms
+  at 1280x800 and under 1 ms at 375x812, and stays under 3 ms with the CPU
+  slowed 4 to 6 times to stand in for a phone.
