@@ -75,9 +75,12 @@ export function drawFigure(ctx, pose, kit, ox, oy, px, opts = {}) {
     const ax = X(a), ay = Y(a), bx = X(b), by = Y(b), R1 = r1 * px, R2 = r2 * px;
     const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
     const nx = -dy / len, ny = dx / len;
+    // The strip is wound clockwise, the same way canvas draws arcs, so the
+    // three shapes add up; wound the other way their overlaps would cancel
+    // out and leave slivers of background showing through the joints.
     ctx.beginPath();
-    ctx.moveTo(ax + nx * R1, ay + ny * R1); ctx.lineTo(bx + nx * R2, by + ny * R2);
-    ctx.lineTo(bx - nx * R2, by - ny * R2); ctx.lineTo(ax - nx * R1, ay - ny * R1); ctx.closePath();
+    ctx.moveTo(ax - nx * R1, ay - ny * R1); ctx.lineTo(bx - nx * R2, by - ny * R2);
+    ctx.lineTo(bx + nx * R2, by + ny * R2); ctx.lineTo(ax + nx * R1, ay + ny * R1); ctx.closePath();
     ctx.moveTo(ax + R1, ay); ctx.arc(ax, ay, R1, 0, Math.PI * 2);
     ctx.moveTo(bx + R2, by); ctx.arc(bx, by, R2, 0, Math.PI * 2);
     fill(c);

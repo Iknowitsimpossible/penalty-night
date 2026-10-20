@@ -31,21 +31,24 @@ export function createRenderer2D(canvas) {
     return b;
   }
 
-  // The stands: still, or (while an end cheers) without their crowd, which
-  // is then stamped back in small pieces that bob on their own beats.
-  function stands(b, f, jx, jy) {
+  // The stadium: one still picture, or (while an end cheers) the stands
+  // without their crowd, which is stamped back in small pieces that bob on
+  // their own beats, then the pitch over them.
+  function stadium(b, f, jx, jy) {
+    // pixel for pixel, except while the screen shakes: then stretched just
+    // enough that the jolt shows no gap at the edges
+    const bleed = jx || jy ? Math.ceil(Math.max(Math.abs(jx), Math.abs(jy))) + 1 : 0;
+    const blit = (img) => ctx.drawImage(img, jx - bleed, jy - bleed, w + bleed * 2, h + bleed * 2);
     const cheer = f.cheer || { you: 0, cpu: 0 };
-    if (Math.max(cheer.you, cheer.cpu) < 0.01) {
-      ctx.drawImage(b.back, jx - 2, jy - 2, w + 4, h + 4);   // a little bleed so a shake shows no edge
-      return;
-    }
-    ctx.drawImage(b.bare, jx - 2, jy - 2, w + 4, h + 4);
+    if (Math.max(cheer.you, cheer.cpu) < 0.01) { blit(b.still); return; }
+    blit(b.bare);
     const t = f.time || 0;
     for (const tile of b.tiles) {
       const amt = tile.side === 'you' ? cheer.you : cheer.cpu;
       const hop = Math.max(0, Math.sin(t * 11 + tile.phase)) * 0.28 * amt * tile.s;
       ctx.drawImage(tile.canvas, tile.x + jx, tile.y + jy - hop, tile.w, tile.h);
     }
+    blit(b.front);
   }
 
   // A ring in the goal mouth: the keyboard target, the hover preview, the dive pulse.
@@ -83,8 +86,7 @@ export function createRenderer2D(canvas) {
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
       const [jx, jy] = f.shake || [0, 0];
       const b = background();
-      stands(b, f, jx, jy);
-      ctx.drawImage(b.front, jx - 2, jy - 2, w + 4, h + 4);
+      stadium(b, f, jx, jy);
       ctx.translate(jx, jy);
       // floodlights: the stadium is dark until they are on (the title sequence)
       const towers = f.towers || [];

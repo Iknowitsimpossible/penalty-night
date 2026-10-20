@@ -77,10 +77,11 @@ const BANDS = 3, PIECES = 8;
 // cam: from views.js. w, h: CSS pixels. dpr: device pixel ratio.
 // opts: { view, cpuColor: '#rrggbb' }
 // Returns layers the renderer stacks every frame:
-//   back:  sky, stands with their crowd, haze
-//   bare:  the same without the end stands' crowd, which is in `tiles`
-//          instead (drawn with an offset while that end cheers)
-//   front: pitch, side stands, boards and lines (transparent elsewhere)
+//   still: everything, for the usual frame
+//   bare:  sky, stands and haze without the end stands' crowd, which is in
+//          `tiles` instead (drawn with an offset while that end cheers)
+//   front: pitch, side stands, boards and lines (transparent elsewhere),
+//          drawn over bare and the tiles
 export function bakeStadium(cam, w, h, dpr, opts) {
   const layer = () => {
     const canvas = document.createElement('canvas');
@@ -288,7 +289,11 @@ export function bakeStadium(cam, w, h, dpr, opts) {
   for (let i = 0; i < 12; i++) { const t = (i / 12) * Math.PI * 2; spot.push([Math.cos(t) * 0.12, 0.004, SPOT_Z + Math.sin(t) * 0.12]); }
   if (polyPath(spot)) { c.fillStyle = 'rgba(242,246,238,0.92)'; c.fill(); }
 
-  return { back: back.canvas, bare: bare.canvas, front: front.canvas, tiles };
+  // the usual frame (nobody cheering) needs just one copy: back and front together
+  const still = layer();
+  still.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  still.ctx.drawImage(back.canvas, 0, 0); still.ctx.drawImage(front.canvas, 0, 0);
+  return { still: still.canvas, bare: bare.canvas, front: front.canvas, tiles };
 }
 
 // The floodlight heads, drawn every frame so each can switch on by itself

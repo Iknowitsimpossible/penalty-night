@@ -114,8 +114,30 @@ export function createEffects(opts) {
     flashesLit = lit;
   }
 
+  // The concept's impact burst: short light strokes around the ball the
+  // moment a keeper gets a hand to it.
+  let burst = null;
+  function impact(pos) { burst = { p: [pos.x, pos.y, pos.z], t: 0 }; }
+  function updateImpact(dt) { if (burst && (burst.t += dt) > 0.3) burst = null; }
+
   const _p = { x: 0, y: 0, s: 0, d: 0 };
   function draw(ctx, cam) {
+    if (burst) {
+      const p = project(cam, burst.p[0], burst.p[1], burst.p[2], _p);
+      if (p) {
+        const k = burst.t / 0.3, r0 = (0.18 + 0.12 * k) * p.s, r1 = (0.32 + 0.22 * k) * p.s;
+        ctx.save();
+        ctx.strokeStyle = '#fff6cf'; ctx.globalAlpha = 0.75 * (1 - k); ctx.lineCap = 'round';
+        ctx.lineWidth = Math.max(1.5, 0.025 * p.s);
+        ctx.beginPath();
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * Math.PI * 2;
+          ctx.moveTo(p.x + Math.cos(a) * r0, p.y + Math.sin(a) * r0); ctx.lineTo(p.x + Math.cos(a) * r1, p.y + Math.sin(a) * r1);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
     if (flashesLit || fwAlive) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
@@ -163,7 +185,7 @@ export function createEffects(opts) {
   }
 
   return {
-    burstConfetti, updateConfetti, firework, updateFireworks, updateFlashes, draw,
+    burstConfetti, updateConfetti, firework, updateFireworks, updateFlashes, draw, impact, updateImpact,
     setFlashRate: (r) => { flashRate = r; },
   };
 }

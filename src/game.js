@@ -112,7 +112,7 @@ function collide() {
   const spheres = keeper.active ? keeperSpheres(keeper) : null;
   collideStep(ball, shot, spheres, rng, {
     post: () => { sfx.post(); cam.shake(0.06); if (debugView) debugView.contact('frame', shot, ball.pos, spheres); },
-    save: () => { sfx.save(); cam.shake(0.035); if (debugView) debugView.contact('keeper', shot, ball.pos, spheres); },
+    save: () => { sfx.save(); cam.shake(0.035); effects.impact(ball.pos); if (debugView) debugView.contact('keeper', shot, ball.pos, spheres); },
     net: (p, v, strength) => { bulgeNet(p, v, strength); sfx.net(); cam.shake(0.02); },
   });
 }
@@ -1099,6 +1099,7 @@ function tick(dt) {
   updateConfetti(dt, time);
   updateFireworks(dt);
   updateFlashes(dt);
+  effects.updateImpact(sdt);
   net.update(replays.playing ? dt * 0.5 : sdt);
   if (motionReduced) { cheer.you = 0; cheer.cpu = 0; }
   cheer.you *= Math.exp(-dt * 0.7); cheer.cpu *= Math.exp(-dt * 0.7);
@@ -1192,15 +1193,20 @@ if (import.meta.env.DEV) {
     freeze(on = true) { devFrozen = on; },
     // Average milliseconds for tick + render over n frames (rendering forced each frame).
     bench(n = 120) {
-      // Reading one pixel back makes the canvas finish its drawing, so the time is real.
+      // Reading one pixel back at the end makes the canvas finish all its
+      // drawing, so the total is real; reading after every frame would stall
+      // the GPU each time and overstate the cost.
       const ctx = canvas.getContext('2d');
-      let tickMs = 0, renderMs = 0;
+      let tickMs = 0;
+      const start = performance.now();
       for (let i = 0; i < n; i++) {
         const t0 = performance.now(); tick(1 / 60);
-        const t1 = performance.now(); render(); ctx.getImageData(0, 0, 1, 1);
-        tickMs += t1 - t0; renderMs += performance.now() - t1;
+        tickMs += performance.now() - t0;
+        render();
       }
-      return { tick: +(tickMs / n).toFixed(2), render: +(renderMs / n).toFixed(2), view: view.view, dpr: pixelRatio };
+      ctx.getImageData(0, 0, 1, 1);
+      const total = performance.now() - start;
+      return { tick: +(tickMs / n).toFixed(2), render: +((total - tickMs) / n).toFixed(2), view: view.view, dpr: pixelRatio };
     },
     get paused() { return paused; },
     dive: (x, y) => diveTo(x, y),

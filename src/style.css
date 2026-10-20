@@ -19,7 +19,8 @@ html, body { height: 100%; margin: 0; }
 body { background: var(--night); color: var(--ink); font-family: var(--body); overflow: hidden; }
 #stage { position: relative; height: 100%; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
 #scene, #trail { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-#trail { pointer-events: none; }
+/* the concept's vignette rides on the swipe-trail canvas, above the game and below the HUD (free: no extra drawing) */
+#trail { pointer-events: none; background: radial-gradient(ellipse 75% 75% at 50% 50%, transparent 60%, rgba(0, 0, 0, 0.5) 100%); }
 
 .hud {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
