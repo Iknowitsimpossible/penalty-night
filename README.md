@@ -10,7 +10,11 @@ This project expands on my CMU 15-112 mini project.
 
 ## Run it yourself
 
+Requires [Node.js](https://nodejs.org) 22.12 or newer.
+
 ```bash
+git clone https://github.com/Iknowitsimpossible/penalty-night.git
+cd penalty-night
 npm install
 npm run dev
 ```
